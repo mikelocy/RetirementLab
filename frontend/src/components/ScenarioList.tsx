@@ -3,6 +3,7 @@ import {
   Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, 
   Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Box 
 } from '@mui/material';
+import { NumericFormat } from 'react-number-format';
 import { useNavigate } from 'react-router-dom';
 import { getScenarios, createScenario } from '../api/client';
 import { Scenario, ScenarioCreate } from '../types';
@@ -118,10 +119,42 @@ const ScenarioList: React.FC = () => {
               <TextField fullWidth type="number" label="Bond Return Rate (0.04 = 4%)" name="bond_return_rate" value={newScenario.bond_return_rate} onChange={handleChange} inputProps={{ step: 0.001 }} />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Annual Contribution (Pre)" name="annual_contribution_pre_retirement" value={newScenario.annual_contribution_pre_retirement} onChange={handleChange} />
+              <NumericFormat
+                customInput={TextField}
+                fullWidth
+                label="Annual Contribution (Pre)"
+                value={newScenario.annual_contribution_pre_retirement}
+                onValueChange={(values) => {
+                  const { floatValue } = values;
+                  setNewScenario(prev => ({
+                    ...prev,
+                    annual_contribution_pre_retirement: floatValue || 0
+                  }));
+                }}
+                thousandSeparator=","
+                prefix="$"
+                decimalScale={0}
+                allowNegative={false}
+              />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Annual Spending (Post)" name="annual_spending_in_retirement" value={newScenario.annual_spending_in_retirement} onChange={handleChange} />
+              <NumericFormat
+                customInput={TextField}
+                fullWidth
+                label="Annual Spending (Post)"
+                value={newScenario.annual_spending_in_retirement}
+                onValueChange={(values) => {
+                  const { floatValue } = values;
+                  setNewScenario(prev => ({
+                    ...prev,
+                    annual_spending_in_retirement: floatValue || 0
+                  }));
+                }}
+                thousandSeparator=","
+                prefix="$"
+                decimalScale={0}
+                allowNegative={false}
+              />
             </Grid>
           </Grid>
         </DialogContent>

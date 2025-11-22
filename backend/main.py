@@ -46,6 +46,13 @@ def read_scenario(scenario_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Scenario not found")
     return scenario
 
+@app.put("/api/scenarios/{scenario_id}", response_model=ScenarioRead)
+def update_scenario(scenario_id: int, scenario: ScenarioCreate, session: Session = Depends(get_session)):
+    updated_scenario = crud.update_scenario(session, scenario_id, scenario)
+    if not updated_scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return updated_scenario
+
 @app.get("/api/scenarios/{scenario_id}/assets", response_model=List[AssetRead])
 def read_assets(scenario_id: int, session: Session = Depends(get_session)):
     return crud.get_assets_for_scenario(session, scenario_id)
@@ -55,7 +62,21 @@ def create_asset(scenario_id: int, asset: AssetCreate, session: Session = Depend
     scenario = crud.get_scenario(session, scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    return crud.create_asset(session, asset, scenario_id)
+    return crud.create_typed_asset(session, scenario_id, asset)
+
+@app.put("/api/assets/{asset_id}", response_model=AssetRead)
+def update_asset(asset_id: int, asset: AssetCreate, session: Session = Depends(get_session)):
+    updated_asset = crud.update_typed_asset(session, asset_id, asset)
+    if not updated_asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return updated_asset
+
+@app.delete("/api/assets/{asset_id}")
+def delete_asset(asset_id: int, session: Session = Depends(get_session)):
+    deleted_asset = crud.delete_asset(session, asset_id)
+    if not deleted_asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return {"status": "deleted", "id": asset_id}
 
 @app.get("/api/scenarios/{scenario_id}/simulate/simple-bond")
 def run_simulation(scenario_id: int, session: Session = Depends(get_session)):
@@ -63,4 +84,3 @@ def run_simulation(scenario_id: int, session: Session = Depends(get_session)):
     if not result:
         raise HTTPException(status_code=404, detail="Scenario not found or simulation failed")
     return result
-
