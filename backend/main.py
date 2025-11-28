@@ -53,6 +53,20 @@ def update_scenario(scenario_id: int, scenario: ScenarioCreate, session: Session
         raise HTTPException(status_code=404, detail="Scenario not found")
     return updated_scenario
 
+@app.delete("/api/scenarios/{scenario_id}")
+def delete_scenario(scenario_id: int, session: Session = Depends(get_session)):
+    print(f"DEBUG: Received delete request for scenario {scenario_id}")
+    try:
+        deleted_scenario = crud.delete_scenario(session, scenario_id)
+        if not deleted_scenario:
+            print(f"DEBUG: Scenario {scenario_id} not found or delete failed")
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        print(f"DEBUG: Scenario {scenario_id} deleted successfully")
+        return {"status": "deleted", "id": scenario_id}
+    except Exception as e:
+        print(f"DEBUG: Error deleting scenario: {e}")
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
 @app.get("/api/scenarios/{scenario_id}/assets", response_model=List[AssetRead])
 def read_assets(scenario_id: int, session: Session = Depends(get_session)):
     return crud.get_assets_for_scenario(session, scenario_id)

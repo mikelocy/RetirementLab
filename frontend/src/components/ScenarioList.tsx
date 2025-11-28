@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { 
   Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, 
-  Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Box 
+  Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Box, IconButton 
 } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { NumericFormat } from 'react-number-format';
 import { useNavigate } from 'react-router-dom';
-import { getScenarios, createScenario } from '../api/client';
+import { getScenarios, createScenario, deleteScenario } from '../api/client';
 import { Scenario, ScenarioCreate } from '../types';
 
 const ScenarioList: React.FC = () => {
@@ -50,6 +51,20 @@ const ScenarioList: React.FC = () => {
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation(); // Prevent row click
+    if (!window.confirm("Are you sure you want to delete this scenario? This will delete all its assets.")) return;
+    try {
+      console.log("DEBUG: Sending delete request for", id);
+      await deleteScenario(id);
+      alert("Scenario deleted successfully. Reloading page.");
+      window.location.reload();
+    } catch (error) {
+      console.error("Failed to delete scenario", error);
+      alert("Failed to delete scenario. Check console for details.");
+    }
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setNewScenario(prev => ({
@@ -73,6 +88,7 @@ const ScenarioList: React.FC = () => {
               <TableCell>Current Age</TableCell>
               <TableCell>Retirement Age</TableCell>
               <TableCell>Created At</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -87,6 +103,11 @@ const ScenarioList: React.FC = () => {
                 <TableCell>{scenario.current_age}</TableCell>
                 <TableCell>{scenario.retirement_age}</TableCell>
                 <TableCell>{new Date(scenario.created_at).toLocaleDateString()}</TableCell>
+                <TableCell align="right">
+                  <IconButton onClick={(e) => handleDelete(e, scenario.id)} size="small" color="error">
+                    <DeleteIcon />
+                  </IconButton>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

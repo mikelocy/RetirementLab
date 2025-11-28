@@ -43,6 +43,11 @@ class RealEstateDetails(SQLModel, table=True):
     annual_rent: float = 0.0  # 0 if not rental
     appreciation_rate: float = 0.0  # as decimal
     
+    # Mortgage specifics
+    mortgage_term_years: int = 30
+    mortgage_current_year: int = 1
+    is_interest_only: bool = False
+    
     asset: Optional[Asset] = Relationship(back_populates="real_estate_details")
 
 class GeneralEquityDetails(SQLModel, table=True):

@@ -25,6 +25,10 @@ export const getScenario = async (id: number): Promise<Scenario> => {
   return response.data;
 };
 
+export const deleteScenario = async (id: number): Promise<void> => {
+  await api.delete(`/scenarios/${id}`);
+};
+
 export const getAssets = async (scenarioId: number): Promise<Asset[]> => {
   const response = await api.get<Asset[]>(`/scenarios/${scenarioId}/assets`);
   return response.data;

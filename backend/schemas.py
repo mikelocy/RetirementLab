@@ -32,6 +32,9 @@ class RealEstateDetailsBase(SQLModel):
     annual_maintenance_pct: float = 0.0
     annual_rent: float = 0.0
     appreciation_rate: float = 0.0
+    mortgage_term_years: int = 30
+    mortgage_current_year: int = 1
+    is_interest_only: bool = False
 
 class RealEstateDetailsCreate(RealEstateDetailsBase):
     pass

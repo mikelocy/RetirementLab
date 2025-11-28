@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { 
   Typography, Card, CardContent, Grid, Table, TableBody, TableCell, TableContainer, 
   TableHead, TableRow, Button, TextField, Box, Divider, Dialog, DialogTitle, DialogContent, DialogActions,
-  FormControl, InputLabel, Select, MenuItem, IconButton, InputAdornment
+  FormControl, InputLabel, Select, MenuItem, IconButton, InputAdornment, Checkbox, FormControlLabel
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -11,6 +11,7 @@ import { NumericFormat } from 'react-number-format';
 import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset } from '../api/client';
 import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult } from '../types';
 import SimulationChart from './SimulationChart';
+import SimulationTable from './SimulationTable';
 
 // Helper function to format currency for display
 const formatCurrency = (value: number) => {
@@ -53,6 +54,163 @@ const CurrencyInput: React.FC<{
   );
 };
 
+interface AssetFormProps {
+  newAssetName: string; setNewAssetName: (v: string) => void;
+  newAssetType: AssetType; setNewAssetType: (v: AssetType) => void;
+  rePropertyType: string; setRePropertyType: (v: string) => void;
+  rePropertyValue: number | ""; setRePropertyValue: (v: number | "") => void;
+  reMortgageBalance: number | ""; setReMortgageBalance: (v: number | "") => void;
+  reInterestRate: number | ""; setReInterestRate: (v: number | "") => void;
+  reAnnualRent: number | ""; setReAnnualRent: (v: number | "") => void;
+  reAppreciationRate: number | ""; setReAppreciationRate: (v: number | "") => void;
+  reMortgageTerm: number | ""; setReMortgageTerm: (v: number | "") => void;
+  reCurrentYear: number | ""; setReCurrentYear: (v: number | "") => void;
+  reIsInterestOnly: boolean; setReIsInterestOnly: (v: boolean) => void;
+  geAccountType: string; setGeAccountType: (v: string) => void;
+  geAccountBalance: number | ""; setGeAccountBalance: (v: number | "") => void;
+  geExpectedReturnRate: number | ""; setGeExpectedReturnRate: (v: number | "") => void;
+  geFeeRate: number | ""; setGeFeeRate: (v: number | "") => void;
+}
+
+const AssetForm: React.FC<AssetFormProps> = ({
+  newAssetName, setNewAssetName,
+  newAssetType, setNewAssetType,
+  rePropertyType, setRePropertyType,
+  rePropertyValue, setRePropertyValue,
+  reMortgageBalance, setReMortgageBalance,
+  reInterestRate, setReInterestRate,
+  reAnnualRent, setReAnnualRent,
+  reAppreciationRate, setReAppreciationRate,
+  reMortgageTerm, setReMortgageTerm,
+  reCurrentYear, setReCurrentYear,
+  reIsInterestOnly, setReIsInterestOnly,
+  geAccountType, setGeAccountType,
+  geAccountBalance, setGeAccountBalance,
+  geExpectedReturnRate, setGeExpectedReturnRate,
+  geFeeRate, setGeFeeRate
+}) => (
+    <Grid container spacing={2} alignItems="flex-start" sx={{ width: '100%', maxWidth: '100%' }}>
+      <Grid item xs={12} sm={6}>
+        <TextField 
+          fullWidth 
+          label="Name" 
+          size="small" 
+          value={newAssetName} 
+          onChange={(e) => setNewAssetName(e.target.value)} 
+        />
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <FormControl fullWidth size="small">
+          <InputLabel>Type</InputLabel>
+          <Select
+            value={newAssetType}
+            label="Type"
+            onChange={(e) => setNewAssetType(e.target.value as AssetType)}
+          >
+            <MenuItem value="general_equity">General Equity</MenuItem>
+            <MenuItem value="real_estate">Real Estate</MenuItem>
+          </Select>
+        </FormControl>
+      </Grid>
+
+      {newAssetType === 'real_estate' ? (
+        <>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Property Type</InputLabel>
+              <Select
+                value={rePropertyType}
+                label="Property Type"
+                onChange={(e) => setRePropertyType(e.target.value)}
+              >
+                <MenuItem value="primary">Primary Residence</MenuItem>
+                <MenuItem value="rental">Rental Property</MenuItem>
+                <MenuItem value="land">Land</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput label="Property Value *" value={rePropertyValue} onChange={setRePropertyValue} required />
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput label="Mortgage Balance" value={reMortgageBalance} onChange={setReMortgageBalance} />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth size="small" type="number" label="Interest Rate (0.04)" value={reInterestRate} onChange={(e) => setReInterestRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput label="Annual Rent" value={reAnnualRent} onChange={setReAnnualRent} />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth size="small" type="number" label="Appreciation Rate (0.03)" value={reAppreciationRate} onChange={(e) => setReAppreciationRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+          </Grid>
+          
+          {/* Mortgage Details */}
+          <Grid item xs={4}>
+            <TextField 
+              fullWidth 
+              size="small" 
+              type="number" 
+              label="Loan Term (Years)" 
+              value={reMortgageTerm} 
+              onChange={(e) => setReMortgageTerm(e.target.value === "" ? "" : parseFloat(e.target.value))} 
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField 
+              fullWidth 
+              size="small" 
+              type="number" 
+              label="Current Year" 
+              value={reCurrentYear} 
+              onChange={(e) => setReCurrentYear(e.target.value === "" ? "" : parseFloat(e.target.value))} 
+              helperText={`Remaining: ${reMortgageTerm === "" || reCurrentYear === "" ? "-" : Math.max(0, Number(reMortgageTerm) - Number(reCurrentYear) + 1)} yrs`}
+            />
+          </Grid>
+          <Grid item xs={4} sx={{ display: 'flex', alignItems: 'center' }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={reIsInterestOnly}
+                  onChange={(e) => setReIsInterestOnly(e.target.checked)}
+                  size="small"
+                />
+              }
+              label="Interest Only"
+            />
+          </Grid>
+        </>
+      ) : (
+        <>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Account Type</InputLabel>
+              <Select
+                value={geAccountType}
+                label="Account Type"
+                onChange={(e) => setGeAccountType(e.target.value)}
+              >
+                <MenuItem value="taxable">Taxable Brokerage</MenuItem>
+                <MenuItem value="ira">IRA</MenuItem>
+                <MenuItem value="roth">Roth IRA</MenuItem>
+                <MenuItem value="401k">401(k)</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput label="Balance *" value={geAccountBalance} onChange={setGeAccountBalance} required />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth size="small" type="number" label="Expected Return (0.07)" value={geExpectedReturnRate} onChange={(e) => setGeExpectedReturnRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+          </Grid>
+        </>
+      )}
+    </Grid>
+);
+
 const ScenarioDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const scenarioId = parseInt(id || '0', 10);
@@ -86,6 +244,9 @@ const ScenarioDetail: React.FC = () => {
   const [reInterestRate, setReInterestRate] = useState<number | "">("");
   const [reAnnualRent, setReAnnualRent] = useState<number | "">("");
   const [reAppreciationRate, setReAppreciationRate] = useState<number | "">("");
+  const [reMortgageTerm, setReMortgageTerm] = useState<number | "">(30);
+  const [reCurrentYear, setReCurrentYear] = useState<number | "">(1);
+  const [reIsInterestOnly, setReIsInterestOnly] = useState(false);
 
   // General equity-specific state
   const [geAccountType, setGeAccountType] = useState("taxable");
@@ -106,6 +267,9 @@ const ScenarioDetail: React.FC = () => {
     setReInterestRate("");
     setReAnnualRent("");
     setReAppreciationRate("");
+    setReMortgageTerm(30);
+    setReCurrentYear(1);
+    setReIsInterestOnly(false);
     setGeAccountType("taxable");
     setGeAccountBalance("");
     setGeExpectedReturnRate("");
@@ -160,6 +324,9 @@ const ScenarioDetail: React.FC = () => {
           interest_rate: reInterestRate === "" ? 0 : Number(reInterestRate),
           annual_rent: reAnnualRent === "" ? 0 : Number(reAnnualRent),
           appreciation_rate: reAppreciationRate === "" ? 0 : Number(reAppreciationRate),
+          mortgage_term_years: reMortgageTerm === "" ? 30 : Number(reMortgageTerm),
+          mortgage_current_year: reCurrentYear === "" ? 1 : Number(reCurrentYear),
+          is_interest_only: reIsInterestOnly,
         },
       };
     } else {
@@ -221,6 +388,9 @@ const ScenarioDetail: React.FC = () => {
       setReInterestRate(d.interest_rate || "");
       setReAnnualRent(d.annual_rent || "");
       setReAppreciationRate(d.appreciation_rate || "");
+      setReMortgageTerm(d.mortgage_term_years || 30);
+      setReCurrentYear(d.mortgage_current_year || 1);
+      setReIsInterestOnly(d.is_interest_only || false);
     } else if (asset.type === "general_equity" && asset.general_equity_details) {
       const d = asset.general_equity_details;
       setGeAccountType(d.account_type || "taxable");
@@ -253,6 +423,7 @@ const ScenarioDetail: React.FC = () => {
     try {
       await updateScenario(scenarioId, editScenario);
       setEditOpen(false);
+      setSimulationResult(null); // Clear old simulation results to force re-run
       loadData(); // Refresh data
     } catch (error) {
       console.error("Error updating scenario", error);
@@ -261,205 +432,177 @@ const ScenarioDetail: React.FC = () => {
 
   if (!scenario) return <Typography>Loading...</Typography>;
 
-  // Asset Form Content Helper
-  const AssetFormContent = () => (
-    <Grid container spacing={2} alignItems="flex-start">
-      <Grid item xs={12} sm={6}>
-        <TextField 
-          fullWidth 
-          label="Name" 
-          size="small" 
-          value={newAssetName} 
-          onChange={(e) => setNewAssetName(e.target.value)} 
-        />
-      </Grid>
-      <Grid item xs={12} sm={6}>
-        <FormControl fullWidth size="small">
-          <InputLabel>Type</InputLabel>
-          <Select
-            value={newAssetType}
-            label="Type"
-            onChange={(e) => setNewAssetType(e.target.value as AssetType)}
-          >
-            <MenuItem value="general_equity">General Equity</MenuItem>
-            <MenuItem value="real_estate">Real Estate</MenuItem>
-          </Select>
-        </FormControl>
-      </Grid>
+  const assetFormProps = {
+    newAssetName, setNewAssetName,
+    newAssetType, setNewAssetType,
+    rePropertyType, setRePropertyType,
+    rePropertyValue, setRePropertyValue,
+    reMortgageBalance, setReMortgageBalance,
+    reInterestRate, setReInterestRate,
+    reAnnualRent, setReAnnualRent,
+    reAppreciationRate, setReAppreciationRate,
+    reMortgageTerm, setReMortgageTerm,
+    reCurrentYear, setReCurrentYear,
+    reIsInterestOnly, setReIsInterestOnly,
+    geAccountType, setGeAccountType,
+    geAccountBalance, setGeAccountBalance,
+    geExpectedReturnRate, setGeExpectedReturnRate,
+    geFeeRate, setGeFeeRate
+  };
 
-      {newAssetType === 'real_estate' ? (
-        <>
-          <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Property Type</InputLabel>
-              <Select
-                value={rePropertyType}
-                label="Property Type"
-                onChange={(e) => setRePropertyType(e.target.value)}
-              >
-                <MenuItem value="primary">Primary Residence</MenuItem>
-                <MenuItem value="rental">Rental Property</MenuItem>
-                <MenuItem value="land">Land</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={6}>
-            <CurrencyInput label="Property Value *" value={rePropertyValue} onChange={setRePropertyValue} required />
-          </Grid>
-          <Grid item xs={6}>
-            <CurrencyInput label="Mortgage Balance" value={reMortgageBalance} onChange={setReMortgageBalance} />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Interest Rate (0.04)" value={reInterestRate} onChange={(e) => setReInterestRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
-          </Grid>
-          <Grid item xs={6}>
-            <CurrencyInput label="Annual Rent" value={reAnnualRent} onChange={setReAnnualRent} />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Appreciation Rate (0.03)" value={reAppreciationRate} onChange={(e) => setReAppreciationRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
-          </Grid>
-        </>
-      ) : (
-        <>
-          <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Account Type</InputLabel>
-              <Select
-                value={geAccountType}
-                label="Account Type"
-                onChange={(e) => setGeAccountType(e.target.value)}
-              >
-                <MenuItem value="taxable">Taxable Brokerage</MenuItem>
-                <MenuItem value="ira">IRA</MenuItem>
-                <MenuItem value="roth">Roth IRA</MenuItem>
-                <MenuItem value="401k">401(k)</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={6}>
-            <CurrencyInput label="Balance *" value={geAccountBalance} onChange={setGeAccountBalance} required />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Expected Return (0.07)" value={geExpectedReturnRate} onChange={(e) => setGeExpectedReturnRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
-          </Grid>
-        </>
-      )}
-    </Grid>
-  );
+  // Calculate fixed width for chart and table alignment
+  const calculateContentWidth = () => {
+    if (!simulationResult || !simulationResult.ages || simulationResult.ages.length === 0) {
+      return null;
+    }
+    const numYears = simulationResult.ages.length;
+    // Table structure: Category column (~200px) + age columns (100px each)
+    const categoryColumnWidth = 200;
+    const ageColumnWidth = 100;
+    // Calculate total width to match table
+    return categoryColumnWidth + (numYears * ageColumnWidth);
+  };
+
+  const contentWidth = calculateContentWidth();
 
   return (
-    <Grid container spacing={3} direction="column">
-      {/* 1) Scenario Card */}
-      <Grid item>
-        <Card sx={{ position: 'relative' }}>
-          <CardContent>
-            <Typography variant="h5" gutterBottom>{scenario.name}</Typography>
-            {scenario.description && (
-              <Typography variant="body2" color="textSecondary" gutterBottom>
-                {scenario.description}
-              </Typography>
-            )}
-            
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={12} sm={6} md={4}>
-                <Typography variant="subtitle2">Timeline</Typography>
-                <Typography variant="body2">Current Age: {scenario.current_age}</Typography>
-                <Typography variant="body2">Retirement Age: {scenario.retirement_age}</Typography>
-                <Typography variant="body2">End Age: {scenario.end_age}</Typography>
+    <Box sx={{ width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
+      <Grid container spacing={3} direction="column" sx={{ width: '100%', maxWidth: '100%' }}>
+        {/* 1) Test Plan Card */}
+        <Grid item sx={{ width: '100%', maxWidth: '100%' }}>
+          <Card sx={{ position: 'relative', width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+            <CardContent sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+              <Typography variant="h5" gutterBottom>{scenario.name}</Typography>
+              {scenario.description && (
+                <Typography variant="body2" color="textSecondary" gutterBottom>
+                  {scenario.description}
+                </Typography>
+              )}
+              
+              <Grid container spacing={2} sx={{ mt: 1, width: '100%', maxWidth: '100%' }}>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Typography variant="subtitle2">Timeline</Typography>
+                  <Typography variant="body2">Current Age: {scenario.current_age}</Typography>
+                  <Typography variant="body2">Retirement Age: {scenario.retirement_age}</Typography>
+                  <Typography variant="body2">End Age: {scenario.end_age}</Typography>
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Typography variant="subtitle2">Rates</Typography>
+                  <Typography variant="body2">Inflation: {(scenario.inflation_rate * 100).toFixed(2)}%</Typography>
+                  <Typography variant="body2">Bond Return: {(scenario.bond_return_rate * 100).toFixed(2)}%</Typography>
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Typography variant="subtitle2">Cash Flow</Typography>
+                  <Typography variant="body2">Contrib (Pre): {formatCurrency(scenario.annual_contribution_pre_retirement)}</Typography>
+                  <Typography variant="body2">Spend (Post): {formatCurrency(scenario.annual_spending_in_retirement)}</Typography>
+                </Grid>
               </Grid>
-              <Grid item xs={12} sm={6} md={4}>
-                <Typography variant="subtitle2">Rates</Typography>
-                <Typography variant="body2">Inflation: {(scenario.inflation_rate * 100).toFixed(2)}%</Typography>
-                <Typography variant="body2">Bond Return: {(scenario.bond_return_rate * 100).toFixed(2)}%</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4}>
-                <Typography variant="subtitle2">Cash Flow</Typography>
-                <Typography variant="body2">Contrib (Pre): {formatCurrency(scenario.annual_contribution_pre_retirement)}</Typography>
-                <Typography variant="body2">Spend (Post): {formatCurrency(scenario.annual_spending_in_retirement)}</Typography>
-              </Grid>
-            </Grid>
 
-            <Box sx={{ position: 'absolute', bottom: 16, right: 16 }}>
-              <Button variant="outlined" size="small" onClick={() => setEditOpen(true)}>
-                Edit
-              </Button>
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
+              <Box sx={{ position: 'absolute', bottom: 16, right: 16 }}>
+                <Button variant="outlined" size="small" onClick={() => setEditOpen(true)}>
+                  Edit
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
 
-      {/* 2) Assets Card */}
-      <Grid item>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>Assets</Typography>
-            <TableContainer sx={{ maxHeight: 300 }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Name</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell align="right">Balance</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {assets.map(asset => (
-                    <TableRow key={asset.id}>
-                      <TableCell>{asset.name}</TableCell>
-                      <TableCell>
-                        {asset.type === 'real_estate' ? 'Real Estate' : 
-                         asset.type === 'general_equity' ? 'General Equity' : asset.type}
-                      </TableCell>
-                      <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
-                      <TableCell align="right">
-                        <IconButton size="small" onClick={() => handleEditAssetClick(asset)}>
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton size="small" onClick={() => handleDeleteAsset(asset.id)}>
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {assets.length === 0 && (
+        {/* 2) Assets Card */}
+        <Grid item sx={{ width: '100%', maxWidth: '100%' }}>
+          <Card sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+            <CardContent sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+              <Typography variant="h6" gutterBottom>Assets</Typography>
+              <TableContainer sx={{ maxHeight: 300, width: '100%', maxWidth: '100%' }}>
+                <Table size="small" sx={{ width: '100%', maxWidth: '100%' }}>
+                  <TableHead>
                     <TableRow>
-                      <TableCell colSpan={4} align="center">No assets added yet.</TableCell>
+                      <TableCell>Name</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell align="right">Balance</TableCell>
+                      <TableCell align="right">Actions</TableCell>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-            
-            <Divider sx={{ my: 2 }} />
-            
-            <Typography variant="subtitle2" gutterBottom>Add New Asset</Typography>
-            <AssetFormContent />
-            <Button variant="contained" onClick={() => handleSaveAsset(false)} sx={{ mt: 2 }}>
-              Add Asset
-            </Button>
-          </CardContent>
-        </Card>
-      </Grid>
-
-      {/* 3) Simulation Card */}
-      <Grid item>
-        <Card>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="h6">Simple Bond Simulation</Typography>
-              <Button variant="contained" color="secondary" onClick={handleRunSimulation}>
-                Run Simulation
+                  </TableHead>
+                  <TableBody>
+                    {assets.map(asset => (
+                      <TableRow key={asset.id}>
+                        <TableCell>{asset.name}</TableCell>
+                        <TableCell>
+                          {asset.type === 'real_estate' ? 'Real Estate' : 
+                           asset.type === 'general_equity' ? 'General Equity' : asset.type}
+                        </TableCell>
+                        <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
+                        <TableCell align="right">
+                          <IconButton size="small" onClick={() => handleEditAssetClick(asset)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton size="small" onClick={() => handleDeleteAsset(asset.id)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {assets.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} align="center">No assets added yet.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              
+              <Divider sx={{ my: 2 }} />
+              
+              <Typography variant="subtitle2" gutterBottom>Add New Asset</Typography>
+              <Box sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+                <AssetForm {...assetFormProps} />
+              </Box>
+              <Button variant="contained" onClick={() => handleSaveAsset(false)} sx={{ mt: 2 }}>
+                Add Asset
               </Button>
-            </Box>
-            
-            <SimulationChart data={simulationResult} />
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </Grid>
+
+      {/* 3) Simulation Header & Button */}
+      <Grid item>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="h6">Simple Bond Simulation</Typography>
+          <Button variant="contained" color="secondary" onClick={handleRunSimulation}>
+            RUN SIMULATION
+          </Button>
+        </Box>
       </Grid>
+    </Grid>
+
+    {/* 4 & 5) Chart and Table Container (Shared Scrollable) */}
+    <Box sx={{ mt: 3, width: '100%', overflowX: 'auto', border: '1px solid #e0e0e0' }}>
+      <Box sx={{ 
+        width: contentWidth ? `${contentWidth}px` : '100%', 
+        minWidth: contentWidth ? `${contentWidth}px` : '100%',
+        display: 'block',
+        position: 'relative'
+      }}>
+        {/* Chart */}
+        <Box sx={{ width: '100%', height: 400 }}>
+          <SimulationChart 
+            key={`chart-${contentWidth}`} 
+            data={simulationResult} 
+            fixedWidth={contentWidth} 
+          />
+        </Box>
+        
+        {/* Table */}
+        {simulationResult && (
+          <Box sx={{ width: '100%' }}>
+            <SimulationTable 
+              key={`table-${contentWidth}`} 
+              data={simulationResult} 
+              fixedWidth={contentWidth} 
+            />
+          </Box>
+        )}
+      </Box>
+    </Box>
 
       {/* Scenario Edit Dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="md" fullWidth>
@@ -538,7 +681,7 @@ const ScenarioDetail: React.FC = () => {
         <DialogTitle>Edit Asset</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
-            <AssetFormContent />
+            <AssetForm {...assetFormProps} />
           </Box>
         </DialogContent>
         <DialogActions>
@@ -547,7 +690,7 @@ const ScenarioDetail: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-    </Grid>
+    </Box>
   );
 };
 

@@ -7,9 +7,10 @@ import { SimpleBondSimulationResult } from '../types';
 
 interface SimulationChartProps {
   data: SimpleBondSimulationResult | null;
+  fixedWidth?: number | null;
 }
 
-const SimulationChart: React.FC<SimulationChartProps> = ({ data }) => {
+const SimulationChart: React.FC<SimulationChartProps> = ({ data, fixedWidth }) => {
   if (!data) {
     return (
       <Box sx={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: '#f5f5f5', borderRadius: 1 }}>
@@ -33,13 +34,23 @@ const SimulationChart: React.FC<SimulationChartProps> = ({ data }) => {
     ...data.balance_real.map(v => Math.max(0, v))
   );
 
+  // Use fixed width if provided, otherwise use 100%
+  const chartWidth = fixedWidth || '100%';
+
+  // If using fixed width (passed from parent calculation), we want to align with the table.
+  // The table has a 200px sticky left column.
+  // We set the chart's left margin to roughly match this so the X-axis starts after the category column.
+  const leftMargin = fixedWidth ? 200 : 20;
+
   return (
-    <ResponsiveContainer width="100%" height={400}>
-      <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 10 }}>
+    <ResponsiveContainer width={chartWidth} height={400}>
+      <LineChart data={chartData} margin={{ top: 20, right: 30, left: leftMargin, bottom: 10 }}>
         <CartesianGrid strokeDasharray="3 3" />
         <XAxis 
           dataKey="age" 
           label={{ value: 'Age', position: 'insideBottomRight', offset: -5 }} 
+          interval={0}
+          tick={{ fontSize: 12 }}
         />
         <YAxis 
           domain={[0, maxValue * 1.1]}

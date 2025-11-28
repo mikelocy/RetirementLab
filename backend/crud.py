@@ -1,4 +1,4 @@
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails
 from .schemas import ScenarioCreate, AssetCreate, RealEstateDetailsCreate, GeneralEquityDetailsCreate
 from datetime import datetime
@@ -32,48 +32,83 @@ def update_scenario(session: Session, scenario_id: int, scenario_update: Scenari
     session.refresh(db_scenario)
     return db_scenario
 
+def delete_scenario(session: Session, scenario_id: int):
+    try:
+        scenario = session.get(Scenario, scenario_id)
+        if not scenario:
+            print(f"DEBUG: Scenario {scenario_id} not found in DB")
+            return None
+        
+        print(f"DEBUG: Found scenario {scenario_id}, deleting assets...")
+        
+        # Get all asset IDs for this scenario
+        asset_ids = session.exec(select(Asset.id).where(Asset.scenario_id == scenario_id)).all()
+        
+        if asset_ids:
+            # Bulk delete details
+            session.exec(delete(RealEstateDetails).where(RealEstateDetails.asset_id.in_(asset_ids)))
+            session.exec(delete(GeneralEquityDetails).where(GeneralEquityDetails.asset_id.in_(asset_ids)))
+            
+            # Bulk delete assets
+            session.exec(delete(Asset).where(Asset.scenario_id == scenario_id))
+            
+        print(f"DEBUG: Deleting scenario object")
+        session.delete(scenario)
+        session.commit()
+        print(f"DEBUG: Commit successful")
+        return scenario
+    except Exception as e:
+        print(f"DEBUG: Exception in delete_scenario: {e}")
+        session.rollback()
+        raise e
+
 def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCreate) -> Asset:
-    # Determine type
-    asset_type = asset_data.type
-
-    # Initialize current_balance based on type and details
-    current_balance = 0.0
-
-    if asset_type == "real_estate":
-        assert asset_data.real_estate_details is not None, "Real estate details required"
-        current_balance = asset_data.real_estate_details.property_value
-    elif asset_type == "general_equity":
-        assert asset_data.general_equity_details is not None, "General equity details required"
-        current_balance = asset_data.general_equity_details.account_balance
-    else:
-        # fallback for unknown types (for now, just 0)
+    try:
+        # Determine type
+        asset_type = asset_data.type
+        
+        # ... (logic)
+        
+        # Initialize current_balance based on type and details
         current_balance = 0.0
+        if asset_type == "real_estate":
+            assert asset_data.real_estate_details is not None, "Real estate details required"
+            current_balance = asset_data.real_estate_details.property_value
+        elif asset_type == "general_equity":
+            assert asset_data.general_equity_details is not None, "General equity details required"
+            current_balance = asset_data.general_equity_details.account_balance
+        else:
+            current_balance = 0.0
 
-    asset = Asset(
-        scenario_id=scenario_id,
-        name=asset_data.name,
-        type=asset_type,
-        current_balance=current_balance,
-    )
-    session.add(asset)
-    session.flush()  # ensure asset.id is populated
-
-    if asset_type == "real_estate" and asset_data.real_estate_details:
-        re_details = RealEstateDetails(
-            asset_id=asset.id,
-            **asset_data.real_estate_details.dict()
+        asset = Asset(
+            scenario_id=scenario_id,
+            name=asset_data.name,
+            type=asset_type,
+            current_balance=current_balance,
         )
-        session.add(re_details)
-    elif asset_type == "general_equity" and asset_data.general_equity_details:
-        ge_details = GeneralEquityDetails(
-            asset_id=asset.id,
-            **asset_data.general_equity_details.dict()
-        )
-        session.add(ge_details)
+        session.add(asset)
+        session.flush()  # ensure asset.id is populated
 
-    session.commit()
-    session.refresh(asset)
-    return asset
+        if asset_type == "real_estate" and asset_data.real_estate_details:
+            re_details = RealEstateDetails(
+                asset_id=asset.id,
+                **asset_data.real_estate_details.dict()
+            )
+            session.add(re_details)
+        elif asset_type == "general_equity" and asset_data.general_equity_details:
+            ge_details = GeneralEquityDetails(
+                asset_id=asset.id,
+                **asset_data.general_equity_details.dict()
+            )
+            session.add(ge_details)
+
+        session.commit()
+        session.refresh(asset)
+        return asset
+    except Exception as e:
+        print(f"DEBUG: Exception in create_typed_asset: {e}")
+        session.rollback()
+        raise e
 
 def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate) -> Asset:
     db_asset = session.get(Asset, asset_id)
@@ -133,22 +168,20 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
     session.refresh(db_asset)
     return db_asset
 
-def delete_asset(session: Session, asset_id: int):
-    asset = session.get(Asset, asset_id)
-    if not asset:
-        return None
-    
-    # Cascade delete should happen if configured in DB, but SQLModel/SQLAlchemy 
-    # usually needs explicit deletion or cascade configuration. 
-    # For simplicity, we'll manually delete children if cascade isn't set up in SQL.
-    if asset.real_estate_details:
-        session.delete(asset.real_estate_details)
-    if asset.general_equity_details:
-        session.delete(asset.general_equity_details)
-        
-    session.delete(asset)
-    session.commit()
-    return asset
+def delete_asset(session: Session, asset_id: int, commit: bool = True):
+    # Direct delete without object loading
+    try:
+        session.exec(delete(RealEstateDetails).where(RealEstateDetails.asset_id == asset_id))
+        session.exec(delete(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset_id))
+        session.exec(delete(Asset).where(Asset.id == asset_id))
+        if commit:
+            session.commit()
+        return True
+    except Exception as e:
+        print(f"DEBUG: Exception in delete_asset: {e}")
+        if commit:
+            session.rollback()
+        raise e
 
 def create_asset(session: Session, asset_create: AssetCreate, scenario_id: int):
     return create_typed_asset(session, scenario_id, asset_create)

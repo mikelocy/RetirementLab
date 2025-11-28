@@ -37,6 +37,9 @@ export interface RealEstateDetailsCreate {
   annual_maintenance_pct?: number;
   annual_rent?: number;
   appreciation_rate?: number;
+  mortgage_term_years?: number;
+  mortgage_current_year?: number;
+  is_interest_only?: boolean;
 }
 
 export interface GeneralEquityDetailsCreate {
@@ -80,4 +83,12 @@ export interface SimpleBondSimulationResult {
   balance_real: number[];
   contribution_nominal: number[];
   spending_nominal: number[];
+  asset_values: { [assetId: number]: number[] };
+  asset_names: { [assetId: number]: string };
+  debt_values: { [assetId: number]: number[] };
+  debt_names: { [assetId: number]: string };
+  income_sources: {
+    salary: number[];
+    rental_income: { [assetId: number]: number[] };
+  };
 }
