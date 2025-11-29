@@ -8,8 +8,8 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import { NumericFormat } from 'react-number-format';
-import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset } from '../api/client';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult } from '../types';
+import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, deleteIncomeSource } from '../api/client';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
 
@@ -70,6 +70,13 @@ interface AssetFormProps {
   geAccountBalance: number | ""; setGeAccountBalance: (v: number | "") => void;
   geExpectedReturnRate: number | ""; setGeExpectedReturnRate: (v: number | "") => void;
   geFeeRate: number | ""; setGeFeeRate: (v: number | "") => void;
+  
+  // Specific Stock Props
+  stockTicker: string; setStockTicker: (v: string) => void;
+  stockShares: number | ""; setStockShares: (v: number | "") => void;
+  stockPrice: number | ""; setStockPrice: (v: number | "") => void;
+  stockAppreciation: number | ""; setStockAppreciation: (v: number | "") => void;
+  stockDividend: number | ""; setStockDividend: (v: number | "") => void;
 }
 
 const AssetForm: React.FC<AssetFormProps> = ({
@@ -87,7 +94,12 @@ const AssetForm: React.FC<AssetFormProps> = ({
   geAccountType, setGeAccountType,
   geAccountBalance, setGeAccountBalance,
   geExpectedReturnRate, setGeExpectedReturnRate,
-  geFeeRate, setGeFeeRate
+  geFeeRate, setGeFeeRate,
+  stockTicker, setStockTicker,
+  stockShares, setStockShares,
+  stockPrice, setStockPrice,
+  stockAppreciation, setStockAppreciation,
+  stockDividend, setStockDividend
 }) => (
     <Grid container spacing={2} alignItems="flex-start" sx={{ width: '100%', maxWidth: '100%' }}>
       <Grid item xs={12} sm={6}>
@@ -109,6 +121,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
           >
             <MenuItem value="general_equity">General Equity</MenuItem>
             <MenuItem value="real_estate">Real Estate</MenuItem>
+            <MenuItem value="specific_stock">Specific Stock</MenuItem>
           </Select>
         </FormControl>
       </Grid>
@@ -180,7 +193,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             />
           </Grid>
         </>
-      ) : (
+      ) : newAssetType === 'general_equity' ? (
         <>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
@@ -207,6 +220,49 @@ const AssetForm: React.FC<AssetFormProps> = ({
             <TextField fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
           </Grid>
         </>
+      ) : (
+        // Specific Stock Form
+        <>
+          <Grid item xs={6}>
+            <TextField 
+              fullWidth 
+              size="small" 
+              label="Ticker Symbol" 
+              value={stockTicker} 
+              onChange={(e) => setStockTicker(e.target.value)} 
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField 
+              fullWidth 
+              size="small" 
+              type="number" 
+              label="Shares Owned *" 
+              value={stockShares} 
+              onChange={(e) => setStockShares(e.target.value === "" ? "" : parseFloat(e.target.value))} 
+              required
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput 
+              label="Current Price *" 
+              value={stockPrice} 
+              onChange={setStockPrice} 
+              required 
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField 
+              fullWidth 
+              size="small" 
+              type="number" 
+              label="Assumed Appreciation (0.08)" 
+              value={stockAppreciation} 
+              onChange={(e) => setStockAppreciation(e.target.value === "" ? "" : parseFloat(e.target.value))} 
+            />
+          </Grid>
+          {/* Future: Dividends */}
+        </>
       )}
     </Grid>
 );
@@ -217,6 +273,7 @@ const ScenarioDetail: React.FC = () => {
   
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [incomeSources, setIncomeSources] = useState<IncomeSource[]>([]);
   const [simulationResult, setSimulationResult] = useState<SimpleBondSimulationResult | null>(null);
   
   // Scenario Edit State
@@ -233,8 +290,19 @@ const ScenarioDetail: React.FC = () => {
     annual_spending_in_retirement: 120000
   });
 
-  // Asset Create State
+  // Asset Create State (Dialog)
+  const [addAssetOpen, setAddAssetOpen] = useState(false);
   const [newAssetName, setNewAssetName] = useState("");
+
+  // ... (Asset details state remains) ...
+  
+  // Income Source State
+  const [addIncomeSourceOpen, setAddIncomeSourceOpen] = useState(false);
+  const [newIncomeName, setNewIncomeName] = useState("");
+  const [newIncomeAmount, setNewIncomeAmount] = useState<number | "">("");
+  const [newIncomeStartAge, setNewIncomeStartAge] = useState<number | "">("");
+  const [newIncomeEndAge, setNewIncomeEndAge] = useState<number | "">("");
+  const [newIncomeAppreciation, setNewIncomeAppreciation] = useState<number | "">("");
   const [newAssetType, setNewAssetType] = useState<AssetType>("general_equity");
 
   // Real estate-specific state
@@ -253,6 +321,13 @@ const ScenarioDetail: React.FC = () => {
   const [geAccountBalance, setGeAccountBalance] = useState<number | "">("");
   const [geExpectedReturnRate, setGeExpectedReturnRate] = useState<number | "">("");
   const [geFeeRate, setGeFeeRate] = useState<number | "">("");
+
+  // Specific Stock State
+  const [stockTicker, setStockTicker] = useState("");
+  const [stockShares, setStockShares] = useState<number | "">("");
+  const [stockPrice, setStockPrice] = useState<number | "">("");
+  const [stockAppreciation, setStockAppreciation] = useState<number | "">("");
+  const [stockDividend, setStockDividend] = useState<number | "">("");
 
   // Asset Edit State
   const [assetEditOpen, setAssetEditOpen] = useState(false);
@@ -274,6 +349,11 @@ const ScenarioDetail: React.FC = () => {
     setGeAccountBalance("");
     setGeExpectedReturnRate("");
     setGeFeeRate("");
+    setStockTicker("");
+    setStockShares("");
+    setStockPrice("");
+    setStockAppreciation("");
+    setStockDividend("");
     setEditingAssetId(null);
   };
 
@@ -296,6 +376,8 @@ const ScenarioDetail: React.FC = () => {
       });
       const a = await getAssets(scenarioId);
       setAssets(a);
+      const inc = await getIncomeSources(scenarioId);
+      setIncomeSources(inc);
     } catch (error) {
       console.error("Error loading scenario data", error);
     }
@@ -329,7 +411,7 @@ const ScenarioDetail: React.FC = () => {
           is_interest_only: reIsInterestOnly,
         },
       };
-    } else {
+    } else if (newAssetType === "general_equity") {
       if (geAccountBalance === "" || isNaN(Number(geAccountBalance))) return;
       
       payload = {
@@ -341,6 +423,21 @@ const ScenarioDetail: React.FC = () => {
           expected_return_rate: geExpectedReturnRate === "" ? 0 : Number(geExpectedReturnRate),
           fee_rate: geFeeRate === "" ? 0 : Number(geFeeRate),
         },
+      };
+    } else {
+      if (stockShares === "" || isNaN(Number(stockShares))) return;
+      if (stockPrice === "" || isNaN(Number(stockPrice))) return;
+
+      payload = {
+        name: newAssetName.trim(),
+        type: "specific_stock",
+        specific_stock_details: {
+          ticker: stockTicker,
+          shares_owned: Number(stockShares),
+          current_price: Number(stockPrice),
+          assumed_appreciation_rate: stockAppreciation === "" ? 0 : Number(stockAppreciation),
+          dividend_yield: stockDividend === "" ? 0 : Number(stockDividend),
+        }
       };
     }
 
@@ -397,9 +494,58 @@ const ScenarioDetail: React.FC = () => {
       setGeAccountBalance(d.account_balance);
       setGeExpectedReturnRate(d.expected_return_rate || "");
       setGeFeeRate(d.fee_rate || "");
+    } else if (asset.type === "specific_stock" && asset.specific_stock_details) {
+      const d = asset.specific_stock_details;
+      setStockTicker(d.ticker || "");
+      setStockShares(d.shares_owned);
+      setStockPrice(d.current_price);
+      setStockAppreciation(d.assumed_appreciation_rate || "");
+      setStockDividend(d.dividend_yield || "");
     }
 
     setAssetEditOpen(true);
+  };
+
+  const handleCreateIncomeSource = async () => {
+    if (!scenario) return;
+    if (!newIncomeName.trim()) return;
+    if (newIncomeAmount === "" || isNaN(Number(newIncomeAmount))) return;
+    if (newIncomeStartAge === "" || isNaN(Number(newIncomeStartAge))) return;
+    if (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge))) return;
+
+    try {
+      await createIncomeSource(scenario.id, {
+        name: newIncomeName,
+        amount: Number(newIncomeAmount),
+        start_age: Number(newIncomeStartAge),
+        end_age: Number(newIncomeEndAge),
+        appreciation_rate: newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation),
+      });
+      
+      const inc = await getIncomeSources(scenario.id);
+      setIncomeSources(inc);
+      
+      // Reset form
+      setNewIncomeName("");
+      setNewIncomeAmount("");
+      setNewIncomeStartAge("");
+      setNewIncomeEndAge("");
+      setNewIncomeAppreciation("");
+      setAddIncomeSourceOpen(false);
+    } catch (error) {
+      console.error("Error creating income source", error);
+    }
+  };
+
+  const handleDeleteIncomeSource = async (id: number) => {
+    if (!window.confirm("Are you sure you want to delete this income source?")) return;
+    try {
+      await deleteIncomeSource(id);
+      const inc = await getIncomeSources(scenarioId);
+      setIncomeSources(inc);
+    } catch (error) {
+      console.error("Error deleting income source", error);
+    }
   };
 
   const handleRunSimulation = async () => {
@@ -447,7 +593,12 @@ const ScenarioDetail: React.FC = () => {
     geAccountType, setGeAccountType,
     geAccountBalance, setGeAccountBalance,
     geExpectedReturnRate, setGeExpectedReturnRate,
-    geFeeRate, setGeFeeRate
+    geFeeRate, setGeFeeRate,
+    stockTicker, setStockTicker,
+    stockShares, setStockShares,
+    stockPrice, setStockPrice,
+    stockAppreciation, setStockAppreciation,
+    stockDividend, setStockDividend
   };
 
   // Calculate fixed width for chart and table alignment
@@ -511,7 +662,12 @@ const ScenarioDetail: React.FC = () => {
         <Grid item sx={{ width: '100%', maxWidth: '100%' }}>
           <Card sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
             <CardContent sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
-              <Typography variant="h6" gutterBottom>Assets</Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">Assets</Typography>
+                <Button variant="contained" size="small" onClick={() => { resetAssetForm(); setAddAssetOpen(true); }}>
+                  Add Asset
+                </Button>
+              </Box>
               <TableContainer sx={{ maxHeight: 300, width: '100%', maxWidth: '100%' }}>
                 <Table size="small" sx={{ width: '100%', maxWidth: '100%' }}>
                   <TableHead>
@@ -528,7 +684,8 @@ const ScenarioDetail: React.FC = () => {
                         <TableCell>{asset.name}</TableCell>
                         <TableCell>
                           {asset.type === 'real_estate' ? 'Real Estate' : 
-                           asset.type === 'general_equity' ? 'General Equity' : asset.type}
+                           asset.type === 'general_equity' ? 'General Equity' : 
+                           asset.type === 'specific_stock' ? 'Specific Stock' : asset.type}
                         </TableCell>
                         <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
                         <TableCell align="right">
@@ -549,16 +706,55 @@ const ScenarioDetail: React.FC = () => {
                   </TableBody>
                 </Table>
               </TableContainer>
-              
-              <Divider sx={{ my: 2 }} />
-              
-              <Typography variant="subtitle2" gutterBottom>Add New Asset</Typography>
-              <Box sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
-                <AssetForm {...assetFormProps} />
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* 3) Income Sources Card */}
+        <Grid item sx={{ width: '100%', maxWidth: '100%' }}>
+          <Card sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+            <CardContent sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">Income Sources</Typography>
+                <Button variant="contained" size="small" onClick={() => setAddIncomeSourceOpen(true)}>
+                  Add Income Source
+                </Button>
               </Box>
-              <Button variant="contained" onClick={() => handleSaveAsset(false)} sx={{ mt: 2 }}>
-                Add Asset
-              </Button>
+              <TableContainer sx={{ maxHeight: 300, width: '100%', maxWidth: '100%' }}>
+                <Table size="small" sx={{ width: '100%', maxWidth: '100%' }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Name</TableCell>
+                      <TableCell align="right">Amount</TableCell>
+                      <TableCell align="right">Start Age</TableCell>
+                      <TableCell align="right">End Age</TableCell>
+                      <TableCell align="right">Appreciation</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {incomeSources.map(inc => (
+                      <TableRow key={inc.id}>
+                        <TableCell>{inc.name}</TableCell>
+                        <TableCell align="right">{formatCurrency(inc.amount)}</TableCell>
+                        <TableCell align="right">{inc.start_age}</TableCell>
+                        <TableCell align="right">{inc.end_age}</TableCell>
+                        <TableCell align="right">{(inc.appreciation_rate * 100).toFixed(2)}%</TableCell>
+                        <TableCell align="right">
+                          <IconButton size="small" onClick={() => handleDeleteIncomeSource(inc.id)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {incomeSources.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} align="center">No income sources added yet.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             </CardContent>
           </Card>
         </Grid>
@@ -687,6 +883,48 @@ const ScenarioDetail: React.FC = () => {
         <DialogActions>
           <Button onClick={() => { setAssetEditOpen(false); resetAssetForm(); }}>Cancel</Button>
           <Button onClick={() => handleSaveAsset(true)} variant="contained">Save Changes</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Asset Dialog */}
+      <Dialog open={addAssetOpen} onClose={() => setAddAssetOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Asset</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <AssetForm {...assetFormProps} />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddAssetOpen(false)}>Cancel</Button>
+          <Button onClick={() => handleSaveAsset(false)} variant="contained">Add</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Income Source Dialog */}
+      <Dialog open={addIncomeSourceOpen} onClose={() => setAddIncomeSourceOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Add Income Source</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField fullWidth label="Name" value={newIncomeName} onChange={(e) => setNewIncomeName(e.target.value)} />
+            </Grid>
+            <Grid item xs={6}>
+              <CurrencyInput label="Annual Amount" value={newIncomeAmount} onChange={setNewIncomeAmount} required />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField fullWidth type="number" label="Start Age" value={newIncomeStartAge} onChange={(e) => setNewIncomeStartAge(e.target.value)} required />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField fullWidth type="number" label="End Age" value={newIncomeEndAge} onChange={(e) => setNewIncomeEndAge(e.target.value)} required />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddIncomeSourceOpen(false)}>Cancel</Button>
+          <Button onClick={handleCreateIncomeSource} variant="contained">Add</Button>
         </DialogActions>
       </Dialog>
 

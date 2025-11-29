@@ -5,7 +5,7 @@ from typing import List
 
 from .database import init_db, get_session
 from .models import Scenario, Asset
-from .schemas import ScenarioCreate, ScenarioRead, AssetCreate, AssetRead
+from .schemas import ScenarioCreate, ScenarioRead, AssetCreate, AssetRead, IncomeSourceCreate, IncomeSourceRead
 from . import crud, simulation
 
 app = FastAPI()
@@ -91,6 +91,24 @@ def delete_asset(asset_id: int, session: Session = Depends(get_session)):
     if not deleted_asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return {"status": "deleted", "id": asset_id}
+
+@app.post("/api/scenarios/{scenario_id}/income_sources", response_model=IncomeSourceRead)
+def create_income_source(scenario_id: int, income_source: IncomeSourceCreate, session: Session = Depends(get_session)):
+    scenario = crud.get_scenario(session, scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return crud.create_income_source(session, income_source, scenario_id)
+
+@app.get("/api/scenarios/{scenario_id}/income_sources", response_model=List[IncomeSourceRead])
+def read_income_sources(scenario_id: int, session: Session = Depends(get_session)):
+    return crud.get_income_sources_for_scenario(session, scenario_id)
+
+@app.delete("/api/income_sources/{id}")
+def delete_income_source(id: int, session: Session = Depends(get_session)):
+    deleted = crud.delete_income_source(session, id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Income source not found")
+    return {"status": "deleted", "id": id}
 
 @app.get("/api/scenarios/{scenario_id}/simulate/simple-bond")
 def run_simulation(scenario_id: int, session: Session = Depends(get_session)):

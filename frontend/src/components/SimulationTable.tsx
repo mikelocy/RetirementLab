@@ -57,7 +57,10 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
     const rental = Object.values(data.income_sources.rental_income).reduce((sum, rentalArray) => {
       return sum + (rentalArray[yearIndex] || 0);
     }, 0);
-    return salary + rental;
+    const specific = Object.values(data.income_sources.specific_income || {}).reduce((sum, arr) => {
+      return sum + (arr[yearIndex] || 0);
+    }, 0);
+    return salary + rental + specific;
   });
 
   return (
@@ -191,6 +194,23 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
                 </TableCell>
               ))}
             </TableRow>
+            {/* Specific Income Sources */}
+            {data.income_sources.specific_income && Object.keys(data.income_sources.specific_income).map((sourceIdStr) => {
+              const sourceId = Number(sourceIdStr);
+              const sourceName = data.income_names ? data.income_names[sourceId] : `Income Source ${sourceId}`;
+              return (
+                <TableRow key={`income-${sourceId}`}>
+                  <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2 }}>
+                    {sourceName}
+                  </TableCell>
+                  {data.ages.map((_, yearIndex) => (
+                    <TableCell key={yearIndex} align="right">
+                      {formatCurrency(data.income_sources.specific_income[sourceId]?.[yearIndex] || 0)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })}
             {Object.keys(data.income_sources.rental_income).map((assetIdStr) => {
               const assetId = Number(assetIdStr);
               const assetName = data.asset_names[assetId];
@@ -213,6 +233,23 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
               </TableCell>
               {totalIncome.map((value, yearIndex) => (
                 <TableCell key={yearIndex} align="right" sx={{ fontWeight: 'bold', backgroundColor: '#fff3e0' }}>
+                  {formatCurrency(value)}
+                </TableCell>
+              ))}
+            </TableRow>
+
+            {/* Expenses Section */}
+            <TableRow>
+              <TableCell colSpan={numYears + 1} sx={{ backgroundColor: '#f5f5f5', fontWeight: 'bold' }}>
+                EXPENSES
+              </TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2 }}>
+                Living Expenses (Retirement)
+              </TableCell>
+              {data.spending_nominal.map((value, yearIndex) => (
+                <TableCell key={yearIndex} align="right">
                   {formatCurrency(value)}
                 </TableCell>
               ))}

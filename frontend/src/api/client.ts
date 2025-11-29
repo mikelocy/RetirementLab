@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult } from '../types';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult, IncomeSource, IncomeSourceCreate } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -51,4 +51,18 @@ export const deleteAsset = async (assetId: number): Promise<void> => {
 export const runSimpleBondSimulation = async (scenarioId: number): Promise<SimpleBondSimulationResult> => {
   const response = await api.get<SimpleBondSimulationResult>(`/scenarios/${scenarioId}/simulate/simple-bond`);
   return response.data;
+};
+
+export const getIncomeSources = async (scenarioId: number): Promise<IncomeSource[]> => {
+  const response = await api.get<IncomeSource[]>(`/scenarios/${scenarioId}/income_sources`);
+  return response.data;
+};
+
+export const createIncomeSource = async (scenarioId: number, payload: IncomeSourceCreate): Promise<IncomeSource> => {
+  const response = await api.post<IncomeSource>(`/scenarios/${scenarioId}/income_sources`, payload);
+  return response.data;
+};
+
+export const deleteIncomeSource = async (id: number): Promise<void> => {
+  await api.delete(`/income_sources/${id}`);
 };

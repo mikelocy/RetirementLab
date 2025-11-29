@@ -1,7 +1,7 @@
 from typing import Dict, List
 from sqlmodel import Session, select
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails
-from .crud import get_assets_for_scenario
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource
+from .crud import get_assets_for_scenario, get_income_sources_for_scenario
 
 def calculate_mortgage_payment(principal: float, annual_rate: float, years: int) -> float:
     """Calculate monthly mortgage payment, then return annual payment."""
@@ -21,6 +21,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     
     # Load assets with their detail relationships
     assets = get_assets_for_scenario(session, scenario_id)
+    income_sources_db = get_income_sources_for_scenario(session, scenario_id)
     
     # Load detail records for each asset
     asset_details = {}
@@ -37,6 +38,12 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             ).first()
             if ge_detail:
                 asset_details[asset.id] = {"type": "general_equity", "details": ge_detail}
+        elif asset.type == "specific_stock":
+            stock_detail = session.exec(
+                select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)
+            ).first()
+            if stock_detail:
+                asset_details[asset.id] = {"type": "specific_stock", "details": stock_detail}
     
     ages = []
     balance_nominal = []
@@ -49,9 +56,14 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     debt_values = {}  # {asset_id: [mortgage balances per year]}
     income_sources = {
         "salary": [],
-        "rental_income": {}  # {asset_id: [values per year]}
+        "rental_income": {},  # {asset_id: [values per year]}
+        "specific_income": {} # {source_id: [values per year]}
     }
     
+    # Initialize specific income tracking
+    for source in income_sources_db:
+        income_sources["specific_income"][source.id] = []
+
     # Initialize asset tracking
     for asset in assets:
         asset_values[asset.id] = []
@@ -91,6 +103,11 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             asset_states[asset.id] = {
                 "balance": ge_detail.account_balance
             }
+        elif asset.type == "specific_stock" and asset.id in asset_details:
+            stock_detail = asset_details[asset.id]["details"]
+            asset_states[asset.id] = {
+                "balance": stock_detail.shares_owned * stock_detail.current_price
+            }
         else:
             # Asset without details - use current_balance
             asset_states[asset.id] = {
@@ -114,6 +131,18 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             contribution_nominal = scenario.annual_contribution_pre_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
         else:
             spending_nominal = scenario.annual_spending_in_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
+        
+        # Calculate specific income for this year
+        year_specific_incomes = {}
+        total_specific_income = 0.0
+        for source in income_sources_db:
+            if source.start_age <= age <= source.end_age:
+                years_since_start = age - source.start_age
+                amount = source.amount * ((1 + source.appreciation_rate) ** years_since_start)
+                year_specific_incomes[source.id] = amount
+                total_specific_income += amount
+            else:
+                year_specific_incomes[source.id] = 0.0
         
         # Track which general equity assets to add contributions to
         general_equity_assets = [a for a in assets if a.type == "general_equity"]
@@ -177,9 +206,12 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 
                 # Add scenario-level contribution (distribute evenly or to first asset)
                 # For simplicity, add to first general equity asset
-                if age < scenario.retirement_age and contribution_nominal > 0 and len(general_equity_assets) > 0:
-                    if general_equity_assets[0].id == asset_id:
+                if len(general_equity_assets) > 0 and general_equity_assets[0].id == asset_id:
+                     if age < scenario.retirement_age and contribution_nominal > 0:
                         state["balance"] += contribution_nominal
+                     
+                     # Add specific income
+                     state["balance"] += total_specific_income
                 
                 # Subtract spending (from first general equity asset)
                 if age >= scenario.retirement_age and spending_nominal > 0 and len(general_equity_assets) > 0:
@@ -188,6 +220,19 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
+            
+            elif asset.type == "specific_stock" and asset_id in asset_details:
+                stock_detail = asset_details[asset_id]["details"]
+                state = asset_states[asset_id]
+                
+                # Growth: (1 + appreciation)
+                # Dividends could be added here too if we wanted to model reinvestment
+                appreciation = stock_detail.assumed_appreciation_rate
+                state["balance"] *= (1 + appreciation)
+                
+                asset_values[asset_id].append(state["balance"])
+                total_assets += state["balance"]
+
             else:
                 # Asset without details - use current balance and scenario bond rate
                 if asset_id not in asset_states:
@@ -203,6 +248,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             salary_income = scenario.annual_contribution_pre_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
         income_sources["salary"].append(salary_income)
         
+        # Track specific income
+        for source in income_sources_db:
+            income_sources["specific_income"][source.id].append(year_specific_incomes.get(source.id, 0.0))
+
         # Portfolio balance = total assets (contributions and spending already applied above)
         current_total_balance = total_assets
         
@@ -224,6 +273,9 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             re_detail = asset_details[asset.id]["details"]
             if re_detail.mortgage_balance > 0:
                 debt_names[asset.id] = f"{asset.name} Mortgage"
+
+    # Build specific income names
+    income_names = {source.id: source.name for source in income_sources_db}
     
     return {
         "ages": ages,
@@ -235,5 +287,6 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         "asset_names": asset_names,
         "debt_values": debt_values,
         "debt_names": debt_names,
-        "income_sources": income_sources
+        "income_sources": income_sources,
+        "income_names": income_names
     }

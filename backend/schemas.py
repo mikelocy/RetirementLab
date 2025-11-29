@@ -22,6 +22,20 @@ class ScenarioRead(ScenarioBase):
     created_at: datetime
     updated_at: datetime
 
+class IncomeSourceBase(SQLModel):
+    name: str
+    amount: float
+    start_age: int
+    end_age: int
+    appreciation_rate: float = 0.0
+
+class IncomeSourceCreate(IncomeSourceBase):
+    pass
+
+class IncomeSourceRead(IncomeSourceBase):
+    id: int
+    scenario_id: int
+
 class RealEstateDetailsBase(SQLModel):
     property_type: str = "rental"
     property_value: float
@@ -57,6 +71,20 @@ class GeneralEquityDetailsRead(GeneralEquityDetailsBase):
     id: int
     asset_id: int
 
+class SpecificStockDetailsBase(SQLModel):
+    ticker: str
+    shares_owned: float
+    current_price: float
+    assumed_appreciation_rate: float = 0.0
+    dividend_yield: float = 0.0
+
+class SpecificStockDetailsCreate(SpecificStockDetailsBase):
+    pass
+
+class SpecificStockDetailsRead(SpecificStockDetailsBase):
+    id: int
+    asset_id: int
+
 class AssetBase(BaseModel):
     name: str
     type: str
@@ -64,12 +92,14 @@ class AssetBase(BaseModel):
 
 class AssetCreate(SQLModel):
     name: str
-    type: str  # "real_estate" or "general_equity"
+    type: str  # "real_estate", "general_equity", or "specific_stock"
     real_estate_details: Optional[RealEstateDetailsCreate] = None
     general_equity_details: Optional[GeneralEquityDetailsCreate] = None
+    specific_stock_details: Optional[SpecificStockDetailsCreate] = None
 
 class AssetRead(AssetBase):
     id: int
     scenario_id: int
     real_estate_details: Optional[RealEstateDetailsRead] = None
     general_equity_details: Optional[GeneralEquityDetailsRead] = None
+    specific_stock_details: Optional[SpecificStockDetailsRead] = None

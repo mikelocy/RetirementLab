@@ -17,6 +17,18 @@ class Scenario(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     assets: List["Asset"] = Relationship(back_populates="scenario")
+    income_sources: List["IncomeSource"] = Relationship(back_populates="scenario")
+
+class IncomeSource(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scenario_id: int = Field(foreign_key="scenario.id")
+    name: str
+    amount: float
+    start_age: int
+    end_age: int
+    appreciation_rate: float = 0.0
+    
+    scenario: Optional[Scenario] = Relationship(back_populates="income_sources")
 
 class Asset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -28,6 +40,7 @@ class Asset(SQLModel, table=True):
     scenario: Scenario = Relationship(back_populates="assets")
     real_estate_details: Optional["RealEstateDetails"] = Relationship(back_populates="asset")
     general_equity_details: Optional["GeneralEquityDetails"] = Relationship(back_populates="asset")
+    specific_stock_details: Optional["SpecificStockDetails"] = Relationship(back_populates="asset")
 
 class RealEstateDetails(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -61,3 +74,15 @@ class GeneralEquityDetails(SQLModel, table=True):
     annual_contribution: float = 0.0  # optional, for future use
     
     asset: Optional[Asset] = Relationship(back_populates="general_equity_details")
+
+class SpecificStockDetails(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id")
+    
+    ticker: str
+    shares_owned: float
+    current_price: float
+    assumed_appreciation_rate: float = 0.0
+    dividend_yield: float = 0.0
+    
+    asset: Optional[Asset] = Relationship(back_populates="specific_stock_details")

@@ -25,7 +25,20 @@ export interface ScenarioCreate {
   annual_spending_in_retirement: number;
 }
 
-export type AssetType = "real_estate" | "general_equity";
+export type AssetType = "real_estate" | "general_equity" | "specific_stock";
+
+export interface SpecificStockDetailsCreate {
+  ticker: string;
+  shares_owned: number;
+  current_price: number;
+  assumed_appreciation_rate?: number;
+  dividend_yield?: number;
+}
+
+export interface SpecificStockDetailsRead extends SpecificStockDetailsCreate {
+  id: number;
+  asset_id: number;
+}
 
 export interface RealEstateDetailsCreate {
   property_type?: string; // e.g. "primary" | "rental" | "land"
@@ -60,6 +73,24 @@ export interface GeneralEquityDetailsRead extends GeneralEquityDetailsCreate {
   asset_id: number;
 }
 
+export interface IncomeSourceCreate {
+  name: string;
+  amount: number;
+  start_age: number;
+  end_age: number;
+  appreciation_rate?: number;
+}
+
+export interface IncomeSource {
+  id: number;
+  scenario_id: number;
+  name: string;
+  amount: number;
+  start_age: number;
+  end_age: number;
+  appreciation_rate: number;
+}
+
 export interface Asset {
   id: number;
   scenario_id: number;
@@ -68,6 +99,7 @@ export interface Asset {
   current_balance: number;
   real_estate_details?: RealEstateDetailsRead;
   general_equity_details?: GeneralEquityDetailsRead;
+  specific_stock_details?: SpecificStockDetailsRead;
 }
 
 export interface AssetCreate {
@@ -75,6 +107,7 @@ export interface AssetCreate {
   type: AssetType;
   real_estate_details?: RealEstateDetailsCreate;
   general_equity_details?: GeneralEquityDetailsCreate;
+  specific_stock_details?: SpecificStockDetailsCreate;
 }
 
 export interface SimpleBondSimulationResult {
@@ -90,5 +123,7 @@ export interface SimpleBondSimulationResult {
   income_sources: {
     salary: number[];
     rental_income: { [assetId: number]: number[] };
+    specific_income: { [sourceId: number]: number[] };
   };
+  income_names: { [sourceId: number]: string };
 }
