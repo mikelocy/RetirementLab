@@ -5,7 +5,7 @@ import os
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(backend_dir)
 # Database file is in the project root
-sqlite_file_name = os.path.join(project_root, "retirement_lab_v2.db")
+sqlite_file_name = os.path.join(project_root, "retirement_lab_v3.db")
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
 connect_args = {"check_same_thread": False}

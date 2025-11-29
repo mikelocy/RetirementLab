@@ -28,6 +28,8 @@ class IncomeSourceBase(SQLModel):
     start_age: int
     end_age: int
     appreciation_rate: float = 0.0
+    source_type: str = "income"
+    linked_asset_id: Optional[int] = None
 
 class IncomeSourceCreate(IncomeSourceBase):
     pass

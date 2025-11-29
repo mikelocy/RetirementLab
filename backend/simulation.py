@@ -51,6 +51,8 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     contribution_nominal_list = []
     spending_nominal_list = []
     net_cash_flow_list = []
+    uncovered_spending_list = []
+    cumulative_uncovered_spending = 0.0
     
     # Detailed breakdown data
     asset_values = {}  # {asset_id: [values per year]}
@@ -133,15 +135,42 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         else:
             spending_nominal = scenario.annual_spending_in_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
         
-        # Calculate specific income for this year
+        # Initialize temp balances for drawdown limit checking (Start of Year)
+        temp_balances = {}
+        for aid, st in asset_states.items():
+            if "property_value" in st:
+                temp_balances[aid] = st["property_value"]
+            else:
+                temp_balances[aid] = st["balance"]
+
+        # Calculate specific income and drawdowns for this year
         year_specific_incomes = {}
+        year_drawdown_amounts = {}
         total_specific_income = 0.0
         for source in income_sources_db:
             if source.start_age <= age <= source.end_age:
                 years_since_start = age - source.start_age
                 amount = source.amount * ((1 + source.appreciation_rate) ** years_since_start)
-                year_specific_incomes[source.id] = amount
-                total_specific_income += amount
+                
+                if source.source_type == "drawdown" and source.linked_asset_id:
+                    asset_id = source.linked_asset_id
+                    available = temp_balances.get(asset_id, 0.0)
+                    
+                    # Cap drawdown at available balance
+                    actual_drawdown = min(amount, available)
+                    
+                    # Deduct from temp so subsequent drawdowns on same asset are limited
+                    if asset_id in temp_balances:
+                        temp_balances[asset_id] -= actual_drawdown
+                    
+                    year_specific_incomes[source.id] = actual_drawdown
+                    total_specific_income += actual_drawdown
+                    
+                    current = year_drawdown_amounts.get(asset_id, 0.0)
+                    year_drawdown_amounts[asset_id] = current + actual_drawdown
+                else:
+                    year_specific_incomes[source.id] = amount
+                    total_specific_income += amount
             else:
                 year_specific_incomes[source.id] = 0.0
         
@@ -154,12 +183,15 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                     rent_val = re_detail.annual_rent * ((1 + scenario.inflation_rate) ** years_from_start)
                     total_rental_income_precalc += rent_val
 
-        # Calculate net spending need (Deficit after Income)
-        # If Income > Spending, net_spending_need is 0 (Surplus is not reinvested).
+        # Calculate Uncovered Spending (Deficit)
         total_income_available = total_specific_income + total_rental_income_precalc
-        net_spending_need = 0.0
-        if age >= scenario.retirement_age:
-            net_spending_need = max(0, spending_nominal - total_income_available)
+        
+        # Accumulate deficit if spending > income
+        if age >= scenario.retirement_age and spending_nominal > total_income_available:
+            deficit = spending_nominal - total_income_available
+            cumulative_uncovered_spending += deficit
+        
+        uncovered_spending_list.append(cumulative_uncovered_spending)
 
         # Track which general equity assets to add contributions to
         general_equity_assets = [a for a in assets if a.type == "general_equity"]
@@ -193,6 +225,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                         if state["mortgage_years_remaining"] <= 0:
                             state["mortgage_balance"] = 0.0
                 
+                # Apply Explicit Drawdown (Reduce Property Value)
+                if asset_id in year_drawdown_amounts:
+                    state["property_value"] -= year_drawdown_amounts[asset_id]
+
                 # Asset value = property value (Gross) - not equity
                 asset_value = state["property_value"]
                 asset_values[asset_id].append(asset_value)
@@ -229,10 +265,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                      # 1. Add Savings (Contributions) - Always added
                      if age < scenario.retirement_age and contribution_nominal > 0:
                         state["balance"] += contribution_nominal
-                     
-                     # 2. Handle Spending Deficit (if any)
-                     if age >= scenario.retirement_age and net_spending_need > 0:
-                        state["balance"] = max(0, state["balance"] - net_spending_need)
+                
+                # Apply Explicit Drawdown
+                if asset_id in year_drawdown_amounts:
+                    state["balance"] -= year_drawdown_amounts[asset_id]
                 
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
@@ -246,6 +282,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 appreciation = stock_detail.assumed_appreciation_rate
                 state["balance"] *= (1 + appreciation)
                 
+                # Apply Explicit Drawdown
+                if asset_id in year_drawdown_amounts:
+                    state["balance"] -= year_drawdown_amounts[asset_id]
+
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
 
@@ -306,6 +346,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         "contribution_nominal": contribution_nominal_list,
         "spending_nominal": spending_nominal_list,
         "net_cash_flow": net_cash_flow_list,
+        "uncovered_spending": uncovered_spending_list,
         "asset_values": asset_values,
         "asset_names": asset_names,
         "debt_values": debt_values,

@@ -303,6 +303,8 @@ const ScenarioDetail: React.FC = () => {
   const [newIncomeStartAge, setNewIncomeStartAge] = useState<number | "">("");
   const [newIncomeEndAge, setNewIncomeEndAge] = useState<number | "">("");
   const [newIncomeAppreciation, setNewIncomeAppreciation] = useState<number | "">("");
+  const [newIncomeType, setNewIncomeType] = useState<"income" | "drawdown">("income");
+  const [newIncomeLinkedAsset, setNewIncomeLinkedAsset] = useState<number | "">("");
   const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null);
   const [newAssetType, setNewAssetType] = useState<AssetType>("general_equity");
 
@@ -364,6 +366,8 @@ const ScenarioDetail: React.FC = () => {
     setNewIncomeStartAge("");
     setNewIncomeEndAge("");
     setNewIncomeAppreciation("");
+    setNewIncomeType("income");
+    setNewIncomeLinkedAsset("");
     setEditingIncomeId(null);
   };
 
@@ -518,17 +522,46 @@ const ScenarioDetail: React.FC = () => {
 
   const handleCreateIncomeSource = async () => {
     if (!scenario) return;
-    if (!newIncomeName.trim()) return;
-    if (newIncomeAmount === "" || isNaN(Number(newIncomeAmount))) return;
-    if (newIncomeStartAge === "" || isNaN(Number(newIncomeStartAge))) return;
-    if (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge))) return;
+    
+    // Validation
+    if (newIncomeType === "drawdown" && (newIncomeLinkedAsset === "" || newIncomeLinkedAsset === 0)) {
+      alert("Please select an asset to sell/drawdown.");
+      return;
+    }
+
+    // Auto-generate name if empty for drawdown
+    let finalName = newIncomeName.trim();
+    if (newIncomeType === "drawdown" && !finalName) {
+      const asset = assets.find(a => a.id === Number(newIncomeLinkedAsset));
+      finalName = asset ? `Drawdown from ${asset.name}` : "Asset Drawdown";
+    }
+
+    if (!finalName) {
+      alert("Please enter a Name or Description.");
+      return;
+    }
+
+    if (newIncomeAmount === "" || isNaN(Number(newIncomeAmount))) {
+      alert("Please enter a valid Annual Amount.");
+      return;
+    }
+    if (newIncomeStartAge === "" || isNaN(Number(newIncomeStartAge))) {
+      alert("Please enter a Start Age.");
+      return;
+    }
+    if (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge))) {
+      alert("Please enter an End Age.");
+      return;
+    }
 
     const payload = {
-      name: newIncomeName,
+      name: finalName,
       amount: Number(newIncomeAmount),
       start_age: Number(newIncomeStartAge),
       end_age: Number(newIncomeEndAge),
       appreciation_rate: newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation),
+      source_type: newIncomeType,
+      linked_asset_id: newIncomeType === "drawdown" && newIncomeLinkedAsset !== "" ? Number(newIncomeLinkedAsset) : null,
     };
 
     try {
@@ -556,6 +589,8 @@ const ScenarioDetail: React.FC = () => {
     setNewIncomeStartAge(income.start_age);
     setNewIncomeEndAge(income.end_age);
     setNewIncomeAppreciation(income.appreciation_rate);
+    setNewIncomeType(income.source_type || "income");
+    setNewIncomeLinkedAsset(income.linked_asset_id || "");
     setAddIncomeSourceOpen(true);
   };
 
@@ -931,10 +966,41 @@ const ScenarioDetail: React.FC = () => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
-              <TextField fullWidth label="Name" value={newIncomeName} onChange={(e) => setNewIncomeName(e.target.value)} />
+              <FormControl fullWidth size="small">
+                <InputLabel>Type</InputLabel>
+                <Select
+                  value={newIncomeType}
+                  label="Type"
+                  onChange={(e) => setNewIncomeType(e.target.value as "income" | "drawdown")}
+                >
+                  <MenuItem value="income">Income Stream (e.g. Pension)</MenuItem>
+                  <MenuItem value="drawdown">Asset Drawdown (Sell Asset)</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            
+            {newIncomeType === "drawdown" && (
+              <Grid item xs={12}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Asset to Sell</InputLabel>
+                  <Select
+                    value={newIncomeLinkedAsset}
+                    label="Asset to Sell"
+                    onChange={(e) => setNewIncomeLinkedAsset(Number(e.target.value))}
+                  >
+                    {assets.map(a => (
+                      <MenuItem key={a.id} value={a.id}>{a.name} ({formatCurrency(a.current_balance)})</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+
+            <Grid item xs={12}>
+              <TextField fullWidth label={newIncomeType === "drawdown" ? "Description" : "Name"} value={newIncomeName} onChange={(e) => setNewIncomeName(e.target.value)} />
             </Grid>
             <Grid item xs={6}>
-              <CurrencyInput label="Annual Amount" value={newIncomeAmount} onChange={setNewIncomeAmount} required />
+              <CurrencyInput label={newIncomeType === "drawdown" ? "Annual Drawdown" : "Annual Amount"} value={newIncomeAmount} onChange={setNewIncomeAmount} required />
             </Grid>
             <Grid item xs={6}>
               <TextField fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />

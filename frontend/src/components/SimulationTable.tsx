@@ -43,9 +43,11 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
   });
 
   const totalDebts = data.ages.map((_, yearIndex) => {
-    return debtIds.reduce((sum, debtId) => {
+    const mortgage = debtIds.reduce((sum, debtId) => {
       return sum + (data.debt_values[debtId]?.[yearIndex] || 0);
     }, 0);
+    const uncovered = data.uncovered_spending ? data.uncovered_spending[yearIndex] : 0;
+    return mortgage + uncovered;
   });
 
   const netWorth = data.ages.map((_, yearIndex) => {
@@ -148,6 +150,20 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
                     ))}
                   </TableRow>
                 ))}
+
+                {data.uncovered_spending && data.uncovered_spending.some(v => v > 0) && (
+                  <TableRow>
+                    <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2, whiteSpace: 'nowrap', color: '#d32f2f' }}>
+                      Uncovered Spending (Deficit Accum.)
+                    </TableCell>
+                    {data.uncovered_spending.map((value, yearIndex) => (
+                      <TableCell key={yearIndex} align="right" sx={{ color: '#d32f2f' }}>
+                        {formatCurrency(value)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                )}
+
                 <TableRow>
                   <TableCell sx={{ pl: 2, fontWeight: 'bold', position: 'sticky', left: 0, backgroundColor: '#ffebee', zIndex: 2, whiteSpace: 'nowrap' }}>
                     Total Debts

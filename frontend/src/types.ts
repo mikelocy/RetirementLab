@@ -79,6 +79,8 @@ export interface IncomeSourceCreate {
   start_age: number;
   end_age: number;
   appreciation_rate?: number;
+  source_type?: "income" | "drawdown";
+  linked_asset_id?: number | null;
 }
 
 export interface IncomeSource {
@@ -89,6 +91,8 @@ export interface IncomeSource {
   start_age: number;
   end_age: number;
   appreciation_rate: number;
+  source_type: "income" | "drawdown";
+  linked_asset_id?: number | null;
 }
 
 export interface Asset {
@@ -117,6 +121,7 @@ export interface SimpleBondSimulationResult {
   contribution_nominal: number[];
   spending_nominal: number[];
   net_cash_flow: number[];
+  uncovered_spending: number[];
   asset_values: { [assetId: number]: number[] };
   asset_names: { [assetId: number]: string };
   debt_values: { [assetId: number]: number[] };

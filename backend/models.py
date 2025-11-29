@@ -27,6 +27,8 @@ class IncomeSource(SQLModel, table=True):
     start_age: int
     end_age: int
     appreciation_rate: float = 0.0
+    source_type: str = "income" # "income" or "drawdown"
+    linked_asset_id: Optional[int] = None
     
     scenario: Optional[Scenario] = Relationship(back_populates="income_sources")
 
