@@ -38,19 +38,23 @@ const SimulationChart: React.FC<SimulationChartProps> = ({ data, fixedWidth }) =
   const chartWidth = fixedWidth || '100%';
 
   // If using fixed width (passed from parent calculation), we want to align with the table.
-  // The table has a 200px sticky left column.
-  // We set the chart's left margin to roughly match this so the X-axis starts after the category column.
-  const leftMargin = fixedWidth ? 200 : 20;
+  // The table has a 250px sticky left column.
+  // We set the chart's left margin to match this so the X-axis starts after the category column.
+  // We also align the points to the center of the table columns (width 120px) using padding.
+  const leftMargin = fixedWidth ? 250 : 20;
+  const rightMargin = fixedWidth ? 0 : 30;
+  const xAxisPadding = fixedWidth ? { left: 60, right: 60 } : { left: 10, right: 10 };
 
   return (
     <ResponsiveContainer width={chartWidth} height={400}>
-      <LineChart data={chartData} margin={{ top: 20, right: 30, left: leftMargin, bottom: 10 }}>
+      <LineChart data={chartData} margin={{ top: 20, right: rightMargin, left: leftMargin, bottom: 10 }}>
         <CartesianGrid strokeDasharray="3 3" />
         <XAxis 
           dataKey="age" 
           label={{ value: 'Age', position: 'insideBottomRight', offset: -5 }} 
           interval={0}
           tick={{ fontSize: 12 }}
+          padding={xAxisPadding}
         />
         <YAxis 
           domain={[0, maxValue * 1.1]}

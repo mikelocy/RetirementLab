@@ -116,6 +116,7 @@ export interface SimpleBondSimulationResult {
   balance_real: number[];
   contribution_nominal: number[];
   spending_nominal: number[];
+  net_cash_flow: number[];
   asset_values: { [assetId: number]: number[] };
   asset_names: { [assetId: number]: string };
   debt_values: { [assetId: number]: number[] };

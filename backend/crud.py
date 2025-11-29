@@ -246,3 +246,15 @@ def delete_income_source(session: Session, income_source_id: int):
     session.delete(income_source)
     session.commit()
     return income_source
+
+def update_income_source(session: Session, income_source_id: int, income_source_update: IncomeSourceCreate):
+    db_income_source = session.get(IncomeSource, income_source_id)
+    if not db_income_source:
+        return None
+    source_data = income_source_update.dict(exclude_unset=True)
+    for key, value in source_data.items():
+        setattr(db_income_source, key, value)
+    session.add(db_income_source)
+    session.commit()
+    session.refresh(db_income_source)
+    return db_income_source

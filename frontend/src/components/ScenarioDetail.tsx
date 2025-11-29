@@ -8,7 +8,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import { NumericFormat } from 'react-number-format';
-import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, deleteIncomeSource } from '../api/client';
+import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource } from '../api/client';
 import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
@@ -303,6 +303,7 @@ const ScenarioDetail: React.FC = () => {
   const [newIncomeStartAge, setNewIncomeStartAge] = useState<number | "">("");
   const [newIncomeEndAge, setNewIncomeEndAge] = useState<number | "">("");
   const [newIncomeAppreciation, setNewIncomeAppreciation] = useState<number | "">("");
+  const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null);
   const [newAssetType, setNewAssetType] = useState<AssetType>("general_equity");
 
   // Real estate-specific state
@@ -355,6 +356,15 @@ const ScenarioDetail: React.FC = () => {
     setStockAppreciation("");
     setStockDividend("");
     setEditingAssetId(null);
+  };
+
+  const resetIncomeForm = () => {
+    setNewIncomeName("");
+    setNewIncomeAmount("");
+    setNewIncomeStartAge("");
+    setNewIncomeEndAge("");
+    setNewIncomeAppreciation("");
+    setEditingIncomeId(null);
   };
 
   const loadData = async () => {
@@ -513,28 +523,40 @@ const ScenarioDetail: React.FC = () => {
     if (newIncomeStartAge === "" || isNaN(Number(newIncomeStartAge))) return;
     if (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge))) return;
 
+    const payload = {
+      name: newIncomeName,
+      amount: Number(newIncomeAmount),
+      start_age: Number(newIncomeStartAge),
+      end_age: Number(newIncomeEndAge),
+      appreciation_rate: newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation),
+    };
+
     try {
-      await createIncomeSource(scenario.id, {
-        name: newIncomeName,
-        amount: Number(newIncomeAmount),
-        start_age: Number(newIncomeStartAge),
-        end_age: Number(newIncomeEndAge),
-        appreciation_rate: newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation),
-      });
+      if (editingIncomeId) {
+        await updateIncomeSource(editingIncomeId, payload);
+      } else {
+        await createIncomeSource(scenario.id, payload);
+      }
       
       const inc = await getIncomeSources(scenario.id);
       setIncomeSources(inc);
       
       // Reset form
-      setNewIncomeName("");
-      setNewIncomeAmount("");
-      setNewIncomeStartAge("");
-      setNewIncomeEndAge("");
-      setNewIncomeAppreciation("");
+      resetIncomeForm();
       setAddIncomeSourceOpen(false);
     } catch (error) {
-      console.error("Error creating income source", error);
+      console.error("Error saving income source", error);
     }
+  };
+
+  const handleEditIncomeSourceClick = (income: IncomeSource) => {
+    setEditingIncomeId(income.id);
+    setNewIncomeName(income.name);
+    setNewIncomeAmount(income.amount);
+    setNewIncomeStartAge(income.start_age);
+    setNewIncomeEndAge(income.end_age);
+    setNewIncomeAppreciation(income.appreciation_rate);
+    setAddIncomeSourceOpen(true);
   };
 
   const handleDeleteIncomeSource = async (id: number) => {
@@ -607,9 +629,9 @@ const ScenarioDetail: React.FC = () => {
       return null;
     }
     const numYears = simulationResult.ages.length;
-    // Table structure: Category column (~200px) + age columns (100px each)
-    const categoryColumnWidth = 200;
-    const ageColumnWidth = 100;
+    // Table structure: Category column (~250px) + age columns (120px each)
+    const categoryColumnWidth = 250;
+    const ageColumnWidth = 120;
     // Calculate total width to match table
     return categoryColumnWidth + (numYears * ageColumnWidth);
   };
@@ -716,7 +738,7 @@ const ScenarioDetail: React.FC = () => {
             <CardContent sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">Income Sources</Typography>
-                <Button variant="contained" size="small" onClick={() => setAddIncomeSourceOpen(true)}>
+                <Button variant="contained" size="small" onClick={() => { resetIncomeForm(); setAddIncomeSourceOpen(true); }}>
                   Add Income Source
                 </Button>
               </Box>
@@ -741,6 +763,9 @@ const ScenarioDetail: React.FC = () => {
                         <TableCell align="right">{inc.end_age}</TableCell>
                         <TableCell align="right">{(inc.appreciation_rate * 100).toFixed(2)}%</TableCell>
                         <TableCell align="right">
+                          <IconButton size="small" onClick={() => handleEditIncomeSourceClick(inc)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
                           <IconButton size="small" onClick={() => handleDeleteIncomeSource(inc.id)}>
                             <DeleteIcon fontSize="small" />
                           </IconButton>
@@ -901,8 +926,8 @@ const ScenarioDetail: React.FC = () => {
       </Dialog>
 
       {/* Add Income Source Dialog */}
-      <Dialog open={addIncomeSourceOpen} onClose={() => setAddIncomeSourceOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add Income Source</DialogTitle>
+      <Dialog open={addIncomeSourceOpen} onClose={() => { setAddIncomeSourceOpen(false); resetIncomeForm(); }} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingIncomeId ? 'Edit Income Source' : 'Add Income Source'}</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
@@ -923,8 +948,8 @@ const ScenarioDetail: React.FC = () => {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAddIncomeSourceOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateIncomeSource} variant="contained">Add</Button>
+          <Button onClick={() => { setAddIncomeSourceOpen(false); resetIncomeForm(); }}>Cancel</Button>
+          <Button onClick={handleCreateIncomeSource} variant="contained">{editingIncomeId ? 'Save Changes' : 'Add'}</Button>
         </DialogActions>
       </Dialog>
 

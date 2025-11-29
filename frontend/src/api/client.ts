@@ -63,6 +63,11 @@ export const createIncomeSource = async (scenarioId: number, payload: IncomeSour
   return response.data;
 };
 
+export const updateIncomeSource = async (id: number, payload: IncomeSourceCreate): Promise<IncomeSource> => {
+  const response = await api.put<IncomeSource>(`/income_sources/${id}`, payload);
+  return response.data;
+};
+
 export const deleteIncomeSource = async (id: number): Promise<void> => {
   await api.delete(`/income_sources/${id}`);
 };

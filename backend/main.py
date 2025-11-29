@@ -103,6 +103,13 @@ def create_income_source(scenario_id: int, income_source: IncomeSourceCreate, se
 def read_income_sources(scenario_id: int, session: Session = Depends(get_session)):
     return crud.get_income_sources_for_scenario(session, scenario_id)
 
+@app.put("/api/income_sources/{id}", response_model=IncomeSourceRead)
+def update_income_source(id: int, income_source: IncomeSourceCreate, session: Session = Depends(get_session)):
+    updated = crud.update_income_source(session, id, income_source)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Income source not found")
+    return updated
+
 @app.delete("/api/income_sources/{id}")
 def delete_income_source(id: int, session: Session = Depends(get_session)):
     deleted = crud.delete_income_source(session, id)

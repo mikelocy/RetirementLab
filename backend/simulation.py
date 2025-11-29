@@ -50,6 +50,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     balance_real = []
     contribution_nominal_list = []
     spending_nominal_list = []
+    net_cash_flow_list = []
     
     # Detailed breakdown data
     asset_values = {}  # {asset_id: [values per year]}
@@ -144,6 +145,22 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             else:
                 year_specific_incomes[source.id] = 0.0
         
+        # Calculate rental income for this year (pre-loop to determine total cash flow)
+        total_rental_income_precalc = 0.0
+        for asset in assets:
+            if asset.type == "real_estate" and asset.id in asset_details:
+                re_detail = asset_details[asset.id]["details"]
+                if re_detail.annual_rent > 0:
+                    rent_val = re_detail.annual_rent * ((1 + scenario.inflation_rate) ** years_from_start)
+                    total_rental_income_precalc += rent_val
+
+        # Calculate net spending need (Deficit after Income)
+        # If Income > Spending, net_spending_need is 0 (Surplus is not reinvested).
+        total_income_available = total_specific_income + total_rental_income_precalc
+        net_spending_need = 0.0
+        if age >= scenario.retirement_age:
+            net_spending_need = max(0, spending_nominal - total_income_available)
+
         # Track which general equity assets to add contributions to
         general_equity_assets = [a for a in assets if a.type == "general_equity"]
         
@@ -173,9 +190,11 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                         principal_payment = annual_payment - interest_payment
                         state["mortgage_balance"] = max(0, state["mortgage_balance"] - principal_payment)
                         state["mortgage_years_remaining"] -= 1
+                        if state["mortgage_years_remaining"] <= 0:
+                            state["mortgage_balance"] = 0.0
                 
-                # Asset value = property value - mortgage balance
-                asset_value = state["property_value"] - state["mortgage_balance"]
+                # Asset value = property value (Gross) - not equity
+                asset_value = state["property_value"]
                 asset_values[asset_id].append(asset_value)
                 debt_values[asset_id].append(state["mortgage_balance"])
                 
@@ -194,8 +213,8 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 ge_detail = asset_details[asset_id]["details"]
                 state = asset_states[asset_id]
                 
-                # Growth with return rate minus fees (use asset rate, or fallback to scenario bond rate)
-                expected_return = ge_detail.expected_return_rate if ge_detail.expected_return_rate > 0 else scenario.bond_return_rate
+                # Growth with return rate minus fees (use asset rate exactly as entered)
+                expected_return = ge_detail.expected_return_rate
                 net_return = expected_return - ge_detail.fee_rate
                 state["balance"] *= (1 + net_return)
                 
@@ -207,16 +226,13 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 # Add scenario-level contribution (distribute evenly or to first asset)
                 # For simplicity, add to first general equity asset
                 if len(general_equity_assets) > 0 and general_equity_assets[0].id == asset_id:
+                     # 1. Add Savings (Contributions) - Always added
                      if age < scenario.retirement_age and contribution_nominal > 0:
                         state["balance"] += contribution_nominal
                      
-                     # Add specific income
-                     state["balance"] += total_specific_income
-                
-                # Subtract spending (from first general equity asset)
-                if age >= scenario.retirement_age and spending_nominal > 0 and len(general_equity_assets) > 0:
-                    if general_equity_assets[0].id == asset_id:
-                        state["balance"] = max(0, state["balance"] - spending_nominal)
+                     # 2. Handle Spending Deficit (if any)
+                     if age >= scenario.retirement_age and net_spending_need > 0:
+                        state["balance"] = max(0, state["balance"] - net_spending_need)
                 
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
@@ -252,6 +268,12 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         for source in income_sources_db:
             income_sources["specific_income"][source.id].append(year_specific_incomes.get(source.id, 0.0))
 
+        # Calculate Net Cash Flow (Total Income - Spending)
+        current_net_cash_flow = 0.0
+        if age >= scenario.retirement_age:
+            current_net_cash_flow = total_income_available - spending_nominal
+        net_cash_flow_list.append(current_net_cash_flow)
+
         # Portfolio balance = total assets (contributions and spending already applied above)
         current_total_balance = total_assets
         
@@ -283,6 +305,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         "balance_real": balance_real,
         "contribution_nominal": contribution_nominal_list,
         "spending_nominal": spending_nominal_list,
+        "net_cash_flow": net_cash_flow_list,
         "asset_values": asset_values,
         "asset_names": asset_names,
         "debt_values": debt_values,
