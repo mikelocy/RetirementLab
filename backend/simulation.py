@@ -309,9 +309,9 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             income_sources["specific_income"][source.id].append(year_specific_incomes.get(source.id, 0.0))
 
         # Calculate Net Cash Flow (Total Income - Spending)
-        current_net_cash_flow = 0.0
-        if age >= scenario.retirement_age:
-            current_net_cash_flow = total_income_available - spending_nominal
+        # Recalculate total income to ensure all components are included
+        total_income_all_sources = salary_income + total_specific_income + total_rental_income_precalc
+        current_net_cash_flow = total_income_all_sources - spending_nominal
         net_cash_flow_list.append(current_net_cash_flow)
 
         # Portfolio balance = total assets (contributions and spending already applied above)
