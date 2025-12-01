@@ -253,7 +253,7 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
             })}
             <TableRow>
               <TableCell sx={{ pl: 2, fontWeight: 'bold', position: 'sticky', left: 0, backgroundColor: '#fff3e0', zIndex: 2, whiteSpace: 'nowrap' }}>
-                Total Income
+                Total Gross Income
               </TableCell>
               {totalIncome.map((value, yearIndex) => (
                 <TableCell key={yearIndex} align="right" sx={{ fontWeight: 'bold', backgroundColor: '#fff3e0' }}>
@@ -261,6 +261,57 @@ const SimulationTable: React.FC<SimulationTableProps> = ({ data, fixedWidth }) =
                 </TableCell>
               ))}
             </TableRow>
+
+            {/* TAX SECTION */}
+            {data.tax_simulation && (
+              <>
+                <TableRow>
+                  <TableCell colSpan={numYears + 1} sx={{ backgroundColor: '#f5f5f5', fontWeight: 'bold' }}>
+                    TAXES
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2, whiteSpace: 'nowrap' }}>
+                    Federal Tax
+                  </TableCell>
+                  {data.tax_simulation.federal_tax.map((value, yearIndex) => (
+                    <TableCell key={yearIndex} align="right">
+                      {formatCurrency(value)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2, whiteSpace: 'nowrap' }}>
+                    State Tax
+                  </TableCell>
+                  {data.tax_simulation.state_tax.map((value, yearIndex) => (
+                    <TableCell key={yearIndex} align="right">
+                      {formatCurrency(value)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={{ pl: 2, fontWeight: 'bold', position: 'sticky', left: 0, backgroundColor: '#ffecb3', zIndex: 2, whiteSpace: 'nowrap' }}>
+                    Total Tax Liability
+                  </TableCell>
+                  {data.tax_simulation.total_tax.map((value, yearIndex) => (
+                    <TableCell key={yearIndex} align="right" sx={{ fontWeight: 'bold', backgroundColor: '#ffecb3' }}>
+                      {formatCurrency(value)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={{ pl: 4, position: 'sticky', left: 0, backgroundColor: 'white', zIndex: 2, whiteSpace: 'nowrap', fontStyle: 'italic' }}>
+                    Effective Tax Rate
+                  </TableCell>
+                  {data.tax_simulation.effective_tax_rate.map((value, yearIndex) => (
+                    <TableCell key={yearIndex} align="right" sx={{ fontStyle: 'italic' }}>
+                      {(value * 100).toFixed(1)}%
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </>
+            )}
 
             {/* Expenses Section */}
             <TableRow>

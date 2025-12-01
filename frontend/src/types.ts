@@ -132,4 +132,10 @@ export interface SimpleBondSimulationResult {
     specific_income: { [sourceId: number]: number[] };
   };
   income_names: { [sourceId: number]: string };
+  tax_simulation?: {
+    federal_tax: number[];
+    state_tax: number[];
+    total_tax: number[];
+    effective_tax_rate: number[];
+  };
 }

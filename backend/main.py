@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
-from typing import List
+from typing import List, Dict, Any, Optional
 
 from .database import init_db, get_session
 from .models import Scenario, Asset
 from .schemas import ScenarioCreate, ScenarioRead, AssetCreate, AssetRead, IncomeSourceCreate, IncomeSourceRead
 from . import crud, simulation
+from .export_import import export_scenario, import_scenario
 
 app = FastAPI()
 
@@ -39,12 +40,41 @@ def read_scenarios(session: Session = Depends(get_session)):
 def create_scenario(scenario: ScenarioCreate, session: Session = Depends(get_session)):
     return crud.create_scenario(session, scenario)
 
+@app.post("/api/scenarios/import")
+def import_scenario_endpoint(
+    data: Dict[str, Any] = Body(...),
+    new_name: Optional[str] = None,
+    session: Session = Depends(get_session)
+):
+    """
+    Import a scenario from a JSON export. 
+    Creates a new scenario with all related assets and income sources.
+    """
+    try:
+        new_id = import_scenario(session, data, new_name)
+        return {"new_scenario_id": new_id, "status": "imported"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
 @app.get("/api/scenarios/{scenario_id}", response_model=ScenarioRead)
 def read_scenario(scenario_id: int, session: Session = Depends(get_session)):
     scenario = crud.get_scenario(session, scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
     return scenario
+
+@app.get("/api/scenarios/{scenario_id}/export")
+def export_scenario_endpoint(scenario_id: int, session: Session = Depends(get_session)):
+    """
+    Export a scenario and all related data to a JSON-compatible format.
+    """
+    try:
+        return export_scenario(session, scenario_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
 
 @app.put("/api/scenarios/{scenario_id}", response_model=ScenarioRead)
 def update_scenario(scenario_id: int, scenario: ScenarioCreate, session: Session = Depends(get_session)):

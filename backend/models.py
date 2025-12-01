@@ -1,6 +1,13 @@
 from typing import Optional, List
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Relationship
+from enum import Enum
+
+class TaxWrapper(str, Enum):
+    TAXABLE = "taxable"            # Brokerage account, individual stock account
+    TRADITIONAL = "traditional"    # 401k, Traditional IRA, other pre-tax
+    ROTH = "roth"                  # Roth IRA, Roth 401k
+    TAX_EXEMPT_OTHER = "tax_exempt_other"  # e.g., muni bond fund
 
 class Scenario(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -75,6 +82,10 @@ class GeneralEquityDetails(SQLModel, table=True):
     fee_rate: float = 0.0  # as decimal
     annual_contribution: float = 0.0  # optional, for future use
     
+    # New Tax Fields
+    tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
+    cost_basis: float = 0.0  # For taxable accounts
+    
     asset: Optional[Asset] = Relationship(back_populates="general_equity_details")
 
 class SpecificStockDetails(SQLModel, table=True):
@@ -86,5 +97,9 @@ class SpecificStockDetails(SQLModel, table=True):
     current_price: float
     assumed_appreciation_rate: float = 0.0
     dividend_yield: float = 0.0
+
+    # New Tax Fields
+    tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
+    cost_basis: float = 0.0  # For taxable accounts
     
     asset: Optional[Asset] = Relationship(back_populates="specific_stock_details")

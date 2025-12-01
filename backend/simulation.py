@@ -1,7 +1,9 @@
 from typing import Dict, List
 from sqlmodel import Session, select
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper
 from .crud import get_assets_for_scenario, get_income_sources_for_scenario
+from .tax_engine import TaxableIncomeBreakdown, calculate_taxes, TaxResult
+from .tax_config import FilingStatus
 
 def calculate_mortgage_payment(principal: float, annual_rate: float, years: int) -> float:
     """Calculate monthly mortgage payment, then return annual payment."""
@@ -104,23 +106,46 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         elif asset.type == "general_equity" and asset.id in asset_details:
             ge_detail = asset_details[asset.id]["details"]
             asset_states[asset.id] = {
-                "balance": ge_detail.account_balance
+                "balance": ge_detail.account_balance,
+                "tax_wrapper": ge_detail.tax_wrapper,
+                "cost_basis": ge_detail.cost_basis
             }
         elif asset.type == "specific_stock" and asset.id in asset_details:
             stock_detail = asset_details[asset.id]["details"]
             asset_states[asset.id] = {
-                "balance": stock_detail.shares_owned * stock_detail.current_price
+                "balance": stock_detail.shares_owned * stock_detail.current_price,
+                "tax_wrapper": stock_detail.tax_wrapper,
+                "cost_basis": stock_detail.cost_basis
             }
         else:
             # Asset without details - use current_balance
+            # Default to taxable for unknown types
             asset_states[asset.id] = {
-                "balance": asset.current_balance
+                "balance": asset.current_balance,
+                "tax_wrapper": TaxWrapper.TAXABLE,
+                "cost_basis": asset.current_balance  # Assume full basis if unknown
             }
     
+    # Tax Output tracking
+    federal_tax_list = []
+    state_tax_list = []
+    total_tax_list = []
+    effective_tax_rate_list = []
+
+    # Current calendar year (simplified assumption: current age corresponds to 2024)
+    current_calendar_year = 2024
+
     for age in range(scenario.current_age, scenario.end_age + 1):
         years_from_start = age - scenario.current_age
+        sim_year = current_calendar_year + years_from_start
         
         ages.append(age)
+        
+        # Reset yearly income buckets
+        ordinary_income = 0.0
+        long_term_cap_gains = 0.0
+        qualified_dividends = 0.0
+        tax_exempt_income = 0.0
         
         # Calculate per-asset values and income
         total_assets = 0.0
@@ -168,9 +193,54 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                     
                     current = year_drawdown_amounts.get(asset_id, 0.0)
                     year_drawdown_amounts[asset_id] = current + actual_drawdown
+
+                    # --- TAX CLASSIFICATION FOR DRAWDOWNS ---
+                    # Determine tax bucket based on asset type
+                    if asset_id in asset_states:
+                        st = asset_states[asset_id]
+                        
+                        # 1. Real Estate Drawdown (Reverse Mortgage / HELOC?) -> For now, treat as Tax Exempt (Loan) or Ordinary?
+                        # If it's a "drawdown" from property value, it's likely selling equity or borrowing.
+                        # Assumption: Selling equity -> Capital Gains? Or HELOC -> Loan?
+                        # SIMPLIFICATION: If type is real_estate, treat as tax_exempt_income (like return of capital or loan proceeds for now)
+                        if "property_value" in st:
+                            tax_exempt_income += actual_drawdown
+                        
+                        else:
+                            # Securities Asset
+                            wrapper = st.get("tax_wrapper", TaxWrapper.TAXABLE)
+                            
+                            if wrapper == TaxWrapper.TRADITIONAL:
+                                ordinary_income += actual_drawdown
+                            elif wrapper == TaxWrapper.ROTH or wrapper == TaxWrapper.TAX_EXEMPT_OTHER:
+                                tax_exempt_income += actual_drawdown
+                            elif wrapper == TaxWrapper.TAXABLE:
+                                # Pro-rata basis logic
+                                current_val = st["balance"]
+                                current_basis = st["cost_basis"]
+                                
+                                if current_val > 0:
+                                    gain_ratio = max(0.0, (current_val - current_basis) / current_val)
+                                else:
+                                    gain_ratio = 0.0
+                                
+                                taxable_gain = actual_drawdown * gain_ratio
+                                return_of_capital = actual_drawdown - taxable_gain
+                                
+                                long_term_cap_gains += taxable_gain
+                                tax_exempt_income += return_of_capital
+                                
+                                # Adjust basis for next year (simulation step happens later, but we need to track basis reduction)
+                                # NOTE: This is tricky. The asset loop below applies the reduction to the BALANCE.
+                                # We need to update the cost_basis state as well.
+                                st["cost_basis"] = max(0.0, current_basis - return_of_capital)
+
                 else:
+                    # Non-drawdown income source (e.g. pension)
+                    # Assumption: Treat as Ordinary Income
                     year_specific_incomes[source.id] = amount
                     total_specific_income += amount
+                    ordinary_income += amount
             else:
                 year_specific_incomes[source.id] = 0.0
         
@@ -182,13 +252,58 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 if re_detail.annual_rent > 0:
                     rent_val = re_detail.annual_rent * ((1 + scenario.inflation_rate) ** years_from_start)
                     total_rental_income_precalc += rent_val
+                    
+                    # Rental Income -> Ordinary Income
+                    ordinary_income += rent_val
 
-        # Calculate Uncovered Spending (Deficit)
-        total_income_available = total_specific_income + total_rental_income_precalc
+        # Calculate income
+        salary_income = 0.0
+        if age < scenario.retirement_age:
+            salary_income = scenario.annual_contribution_pre_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
+            # Salary -> Ordinary Income
+            ordinary_income += salary_income
+            
+        income_sources["salary"].append(salary_income)
         
-        # Accumulate deficit if spending > income
-        if age >= scenario.retirement_age and spending_nominal > total_income_available:
-            deficit = spending_nominal - total_income_available
+        # --- CALCULATE TAXES ---
+        tax_breakdown = TaxableIncomeBreakdown(
+            ordinary_income=ordinary_income,
+            long_term_cap_gains=long_term_cap_gains,
+            qualified_dividends=qualified_dividends,
+            tax_exempt_income=tax_exempt_income
+        )
+        
+        tax_result = calculate_taxes(
+            year=sim_year,
+            filing_status=FilingStatus.MARRIED_FILING_JOINTLY,
+            state="CA",
+            breakdown=tax_breakdown
+        )
+        
+        # Calculate Net After-Tax Income
+        gross_income_all = ordinary_income + long_term_cap_gains + qualified_dividends + tax_exempt_income
+        net_after_tax_income = gross_income_all - tax_result.total_tax
+        
+        # Store Tax Results
+        federal_tax_list.append(tax_result.federal_ordinary_tax + tax_result.federal_ltcg_tax)
+        state_tax_list.append(tax_result.state_tax)
+        total_tax_list.append(tax_result.total_tax)
+        effective_tax_rate_list.append(tax_result.effective_total_rate)
+
+        # Calculate Uncovered Spending (Deficit) based on NET Income
+        # total_income_available was previously just gross specific + rental.
+        # Now we should use net_after_tax_income, but careful:
+        # net_after_tax_income includes Salary. 
+        # Pre-retirement, Salary covers contributions. 
+        # Post-retirement, Net Income covers spending.
+        
+        # Re-align logic:
+        # If we are RETIRED:
+        #   Available = Net After Tax Income (from Drawdowns + Pension + Rent)
+        #   Deficit = Spending - Available
+        
+        if age >= scenario.retirement_age and spending_nominal > net_after_tax_income:
+            deficit = spending_nominal - net_after_tax_income
             cumulative_uncovered_spending += deficit
         
         uncovered_spending_list.append(cumulative_uncovered_spending)
@@ -298,20 +413,19 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
         
-        # Calculate income
-        salary_income = 0.0
-        if age < scenario.retirement_age:
-            salary_income = scenario.annual_contribution_pre_retirement * ((1 + scenario.inflation_rate) ** years_from_start)
-        income_sources["salary"].append(salary_income)
-        
         # Track specific income
         for source in income_sources_db:
             income_sources["specific_income"][source.id].append(year_specific_incomes.get(source.id, 0.0))
 
         # Calculate Net Cash Flow (Total Income - Spending)
         # Recalculate total income to ensure all components are included
-        total_income_all_sources = salary_income + total_specific_income + total_rental_income_precalc
-        current_net_cash_flow = total_income_all_sources - spending_nominal
+        # Use NET After Tax Income for the "Income" part of Net Cash Flow
+        
+        # Pre-retirement: Net Income (Salary + etc) - Contributions (handled separately?) 
+        # Or simply: Net Income - Spending.
+        # Since spending is 0 pre-retirement, Net Cash Flow = Net Income.
+        
+        current_net_cash_flow = net_after_tax_income - spending_nominal
         net_cash_flow_list.append(current_net_cash_flow)
 
         # Portfolio balance = total assets (contributions and spending already applied above)
@@ -352,5 +466,11 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         "debt_values": debt_values,
         "debt_names": debt_names,
         "income_sources": income_sources,
-        "income_names": income_names
+        "income_names": income_names,
+        "tax_simulation": {
+            "federal_tax": federal_tax_list,
+            "state_tax": state_tax_list,
+            "total_tax": total_tax_list,
+            "effective_tax_rate": effective_tax_rate_list
+        }
     }

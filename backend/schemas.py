@@ -3,6 +3,8 @@ from datetime import datetime
 from pydantic import BaseModel
 from sqlmodel import SQLModel
 
+from .models import TaxWrapper
+
 class ScenarioBase(BaseModel):
     name: str
     description: Optional[str] = None
@@ -65,6 +67,8 @@ class GeneralEquityDetailsBase(SQLModel):
     expected_return_rate: float = 0.0
     fee_rate: float = 0.0
     annual_contribution: float = 0.0
+    tax_wrapper: TaxWrapper = TaxWrapper.TAXABLE
+    cost_basis: float = 0.0
 
 class GeneralEquityDetailsCreate(GeneralEquityDetailsBase):
     pass
@@ -79,6 +83,8 @@ class SpecificStockDetailsBase(SQLModel):
     current_price: float
     assumed_appreciation_rate: float = 0.0
     dividend_yield: float = 0.0
+    tax_wrapper: TaxWrapper = TaxWrapper.TAXABLE
+    cost_basis: float = 0.0
 
 class SpecificStockDetailsCreate(SpecificStockDetailsBase):
     pass

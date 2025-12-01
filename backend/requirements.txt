@@ -3,4 +3,4 @@ uvicorn[standard]
 sqlmodel
 pydantic
 python-dotenv
-
+pytest
