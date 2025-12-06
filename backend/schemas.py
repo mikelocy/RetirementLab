@@ -3,7 +3,8 @@ from datetime import datetime
 from pydantic import BaseModel
 from sqlmodel import SQLModel
 
-from .models import TaxWrapper
+from .models import TaxWrapper, IncomeType, DepreciationMethod
+from .tax_config import FilingStatus
 
 class ScenarioBase(BaseModel):
     name: str
@@ -15,6 +16,7 @@ class ScenarioBase(BaseModel):
     bond_return_rate: float
     annual_contribution_pre_retirement: float
     annual_spending_in_retirement: float
+    filing_status: FilingStatus = FilingStatus.MARRIED_FILING_JOINTLY
 
 class ScenarioCreate(ScenarioBase):
     pass
@@ -32,6 +34,7 @@ class IncomeSourceBase(SQLModel):
     appreciation_rate: float = 0.0
     source_type: str = "income"
     linked_asset_id: Optional[int] = None
+    income_type: IncomeType = IncomeType.ORDINARY
 
 class IncomeSourceCreate(IncomeSourceBase):
     pass
@@ -53,6 +56,15 @@ class RealEstateDetailsBase(SQLModel):
     mortgage_term_years: int = 30
     mortgage_current_year: int = 1
     is_interest_only: bool = False
+    # Tax-related fields
+    purchase_price: float = 0.0
+    land_value: float = 0.0
+    depreciation_method: DepreciationMethod = DepreciationMethod.NONE
+    depreciation_start_year: Optional[int] = None
+    accumulated_depreciation: float = 0.0
+    # Primary residence tracking (for capital gains exclusion)
+    primary_residence_start_age: Optional[int] = None
+    primary_residence_end_age: Optional[int] = None
 
 class RealEstateDetailsCreate(RealEstateDetailsBase):
     pass

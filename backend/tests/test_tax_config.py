@@ -48,10 +48,12 @@ class TestTaxConfig(unittest.TestCase):
             get_state_tax_table("NY", 2024, FilingStatus.MARRIED_FILING_JOINTLY)
 
     def test_unsupported_filing_status(self):
-        """Test that requesting a filing status not in the dict raises ValueError"""
-        # CA tables currently only have MFJ populated in our mock config
-        with self.assertRaises(ValueError):
-            get_state_tax_table("CA", 2024, FilingStatus.SINGLE)
+        """Test that all filing statuses are now supported"""
+        # All filing statuses should work now
+        for status in FilingStatus:
+            table = get_state_tax_table("CA", 2024, status)
+            self.assertIsNotNone(table)
+            self.assertGreater(len(table.brackets), 0)
 
 if __name__ == "__main__":
     unittest.main()

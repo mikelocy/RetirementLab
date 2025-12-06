@@ -9,7 +9,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import { NumericFormat } from 'react-number-format';
 import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource } from '../api/client';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource } from '../types';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
 
@@ -66,10 +66,18 @@ interface AssetFormProps {
   reMortgageTerm: number | ""; setReMortgageTerm: (v: number | "") => void;
   reCurrentYear: number | ""; setReCurrentYear: (v: number | "") => void;
   reIsInterestOnly: boolean; setReIsInterestOnly: (v: boolean) => void;
+  rePurchasePrice: number | ""; setRePurchasePrice: (v: number | "") => void;
+  reLandValue: number | ""; setReLandValue: (v: number | "") => void;
+  reDepreciationMethod: "none" | "residential_27_5" | "commercial_39"; setReDepreciationMethod: (v: "none" | "residential_27_5" | "commercial_39") => void;
+  reDepreciationStartYear: number | ""; setReDepreciationStartYear: (v: number | "") => void;
+  reAccumulatedDepreciation: number | ""; setReAccumulatedDepreciation: (v: number | "") => void;
+  rePrimaryResidenceStartAge: number | ""; setRePrimaryResidenceStartAge: (v: number | "") => void;
+  rePrimaryResidenceEndAge: number | ""; setRePrimaryResidenceEndAge: (v: number | "") => void;
   geAccountType: string; setGeAccountType: (v: string) => void;
   geAccountBalance: number | ""; setGeAccountBalance: (v: number | "") => void;
   geExpectedReturnRate: number | ""; setGeExpectedReturnRate: (v: number | "") => void;
   geFeeRate: number | ""; setGeFeeRate: (v: number | "") => void;
+  geCostBasis: number | ""; setGeCostBasis: (v: number | "") => void;
   
   // Specific Stock Props
   stockTicker: string; setStockTicker: (v: string) => void;
@@ -77,6 +85,7 @@ interface AssetFormProps {
   stockPrice: number | ""; setStockPrice: (v: number | "") => void;
   stockAppreciation: number | ""; setStockAppreciation: (v: number | "") => void;
   stockDividend: number | ""; setStockDividend: (v: number | "") => void;
+  stockCostBasis: number | ""; setStockCostBasis: (v: number | "") => void;
 }
 
 const AssetForm: React.FC<AssetFormProps> = ({
@@ -91,15 +100,24 @@ const AssetForm: React.FC<AssetFormProps> = ({
   reMortgageTerm, setReMortgageTerm,
   reCurrentYear, setReCurrentYear,
   reIsInterestOnly, setReIsInterestOnly,
+  rePurchasePrice, setRePurchasePrice,
+  reLandValue, setReLandValue,
+  reDepreciationMethod, setReDepreciationMethod,
+  reDepreciationStartYear, setReDepreciationStartYear,
+  reAccumulatedDepreciation, setReAccumulatedDepreciation,
+  rePrimaryResidenceStartAge, setRePrimaryResidenceStartAge,
+  rePrimaryResidenceEndAge, setRePrimaryResidenceEndAge,
   geAccountType, setGeAccountType,
   geAccountBalance, setGeAccountBalance,
   geExpectedReturnRate, setGeExpectedReturnRate,
   geFeeRate, setGeFeeRate,
+  geCostBasis, setGeCostBasis,
   stockTicker, setStockTicker,
   stockShares, setStockShares,
   stockPrice, setStockPrice,
   stockAppreciation, setStockAppreciation,
-  stockDividend, setStockDividend
+  stockDividend, setStockDividend,
+  stockCostBasis, setStockCostBasis
 }) => (
     <Grid container spacing={2} alignItems="flex-start" sx={{ width: '100%', maxWidth: '100%' }}>
       <Grid item xs={12} sm={6}>
@@ -155,7 +173,15 @@ const AssetForm: React.FC<AssetFormProps> = ({
             <CurrencyInput label="Annual Rent" value={reAnnualRent} onChange={setReAnnualRent} />
           </Grid>
           <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Appreciation Rate (0.03)" value={reAppreciationRate} onChange={(e) => setReAppreciationRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+            <TextField fullWidth size="small" type="number" label="Appreciation Rate" value={reAppreciationRate} onChange={(e) => {
+              const val = e.target.value;
+              if (val === "") {
+                setReAppreciationRate("");
+              } else {
+                const parsed = parseFloat(val);
+                setReAppreciationRate(isNaN(parsed) ? "" : parsed);
+              }
+            }} inputProps={{ step: 0.001, min: 0 }} />
           </Grid>
           
           {/* Mortgage Details */}
@@ -192,6 +218,122 @@ const AssetForm: React.FC<AssetFormProps> = ({
               label="Interest Only"
             />
           </Grid>
+          
+          {/* Tax-Related Fields */}
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }}>Tax Information</Divider>
+          </Grid>
+          
+          <Grid item xs={6}>
+            <CurrencyInput 
+              label="Purchase Price" 
+              value={rePurchasePrice} 
+              onChange={setRePurchasePrice}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+              Original acquisition cost (for capital gains calculation)
+            </Typography>
+          </Grid>
+          
+          <Grid item xs={6}>
+            <CurrencyInput 
+              label="Land Value" 
+              value={reLandValue} 
+              onChange={setReLandValue}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+              Portion of purchase price that's land (not depreciable)
+            </Typography>
+          </Grid>
+          
+          {(rePropertyType === "rental") && (
+            <>
+              <Grid item xs={6}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Depreciation Method</InputLabel>
+                  <Select
+                    value={reDepreciationMethod}
+                    label="Depreciation Method"
+                    onChange={(e) => setReDepreciationMethod(e.target.value as "none" | "residential_27_5" | "commercial_39")}
+                  >
+                    <MenuItem value="none">None</MenuItem>
+                    <MenuItem value="residential_27_5">Residential Rental (27.5 years)</MenuItem>
+                    <MenuItem value="commercial_39">Commercial (39 years)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              {reDepreciationMethod !== "none" && (
+                <>
+                  <Grid item xs={6}>
+                    <TextField 
+                      fullWidth 
+                      size="small" 
+                      type="number" 
+                      label="Depreciation Start Year" 
+                      value={reDepreciationStartYear} 
+                      onChange={(e) => setReDepreciationStartYear(e.target.value === "" ? "" : parseInt(e.target.value))}
+                      helperText="Year depreciation began"
+                    />
+                  </Grid>
+                  <Grid item xs={6}>
+                    <CurrencyInput 
+                      label="Accumulated Depreciation" 
+                      value={reAccumulatedDepreciation} 
+                      onChange={setReAccumulatedDepreciation}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      Total depreciation taken to date
+                    </Typography>
+                  </Grid>
+                </>
+              )}
+            </>
+          )}
+          
+          {rePropertyType === "primary" && (
+            <Grid item xs={12}>
+              <Typography variant="caption" color="text.secondary">
+                Primary residences may qualify for capital gains exclusion: $250k (single) or $500k (married filing jointly) if owned and used as primary residence for 2 of the last 5 years.
+              </Typography>
+            </Grid>
+          )}
+          
+          {/* Primary Residence Fields (for capital gains exclusion) */}
+          {(rePropertyType === "primary") && (
+            <>
+              <Grid item xs={12}>
+                <Divider sx={{ my: 1 }}>Primary Residence (for Capital Gains Exclusion)</Divider>
+              </Grid>
+              <Grid item xs={6}>
+                <TextField 
+                  fullWidth 
+                  size="small" 
+                  type="number" 
+                  label="Primary Residence Start Age" 
+                  value={rePrimaryResidenceStartAge} 
+                  onChange={(e) => setRePrimaryResidenceStartAge(e.target.value === "" ? "" : parseInt(e.target.value))}
+                  helperText="Age when property became primary residence"
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField 
+                  fullWidth 
+                  size="small" 
+                  type="number" 
+                  label="Primary Residence End Age" 
+                  value={rePrimaryResidenceEndAge} 
+                  onChange={(e) => setRePrimaryResidenceEndAge(e.target.value === "" ? "" : parseInt(e.target.value))}
+                  helperText="Age when property stopped being primary residence (leave blank if still primary)"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="caption" color="text.secondary">
+                  Note: To sell this property, create a "House Sale" income source instead of setting a sale age here.
+                </Typography>
+              </Grid>
+            </>
+          )}
         </>
       ) : newAssetType === 'general_equity' ? (
         <>
@@ -219,6 +361,19 @@ const AssetForm: React.FC<AssetFormProps> = ({
           <Grid item xs={6}>
             <TextField fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
           </Grid>
+          {(geAccountType === "taxable" || geAccountType === "") && (
+            <Grid item xs={6}>
+              <CurrencyInput 
+                label="Cost Basis (for taxable accounts)" 
+                value={geCostBasis} 
+                onChange={setGeCostBasis}
+                required={geAccountType === "taxable"}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                Original purchase price. Used to calculate capital gains on withdrawals. Defaults to current balance if not set.
+              </Typography>
+            </Grid>
+          )}
         </>
       ) : (
         // Specific Stock Form
@@ -261,6 +416,13 @@ const AssetForm: React.FC<AssetFormProps> = ({
               onChange={(e) => setStockAppreciation(e.target.value === "" ? "" : parseFloat(e.target.value))} 
             />
           </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput 
+              label="Cost Basis (original purchase price)" 
+              value={stockCostBasis} 
+              onChange={setStockCostBasis}
+            />
+          </Grid>
           {/* Future: Dividends */}
         </>
       )}
@@ -287,7 +449,8 @@ const ScenarioDetail: React.FC = () => {
     inflation_rate: 0.03,
     bond_return_rate: 0.04,
     annual_contribution_pre_retirement: 20000,
-    annual_spending_in_retirement: 120000
+    annual_spending_in_retirement: 120000,
+    filing_status: 'married_filing_jointly'
   });
 
   // Asset Create State (Dialog)
@@ -303,7 +466,8 @@ const ScenarioDetail: React.FC = () => {
   const [newIncomeStartAge, setNewIncomeStartAge] = useState<number | "">("");
   const [newIncomeEndAge, setNewIncomeEndAge] = useState<number | "">("");
   const [newIncomeAppreciation, setNewIncomeAppreciation] = useState<number | "">("");
-  const [newIncomeType, setNewIncomeType] = useState<"income" | "drawdown">("income");
+  const [newIncomeType, setNewIncomeType] = useState<"income" | "drawdown" | "house_sale">("income");
+  const [newIncomeTaxType, setNewIncomeTaxType] = useState<IncomeType>("ordinary");
   const [newIncomeLinkedAsset, setNewIncomeLinkedAsset] = useState<number | "">("");
   const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null);
   const [newAssetType, setNewAssetType] = useState<AssetType>("general_equity");
@@ -318,12 +482,22 @@ const ScenarioDetail: React.FC = () => {
   const [reMortgageTerm, setReMortgageTerm] = useState<number | "">(30);
   const [reCurrentYear, setReCurrentYear] = useState<number | "">(1);
   const [reIsInterestOnly, setReIsInterestOnly] = useState(false);
+  // Real estate tax fields
+  const [rePurchasePrice, setRePurchasePrice] = useState<number | "">("");
+  const [reLandValue, setReLandValue] = useState<number | "">("");
+  const [reDepreciationMethod, setReDepreciationMethod] = useState<"none" | "residential_27_5" | "commercial_39">("none");
+  const [reDepreciationStartYear, setReDepreciationStartYear] = useState<number | "">("");
+  const [reAccumulatedDepreciation, setReAccumulatedDepreciation] = useState<number | "">("");
+  // Real estate sale fields
+  const [rePrimaryResidenceStartAge, setRePrimaryResidenceStartAge] = useState<number | "">("");
+  const [rePrimaryResidenceEndAge, setRePrimaryResidenceEndAge] = useState<number | "">("");
 
   // General equity-specific state
   const [geAccountType, setGeAccountType] = useState("taxable");
   const [geAccountBalance, setGeAccountBalance] = useState<number | "">("");
   const [geExpectedReturnRate, setGeExpectedReturnRate] = useState<number | "">("");
   const [geFeeRate, setGeFeeRate] = useState<number | "">("");
+  const [geCostBasis, setGeCostBasis] = useState<number | "">("");
 
   // Specific Stock State
   const [stockTicker, setStockTicker] = useState("");
@@ -331,6 +505,7 @@ const ScenarioDetail: React.FC = () => {
   const [stockPrice, setStockPrice] = useState<number | "">("");
   const [stockAppreciation, setStockAppreciation] = useState<number | "">("");
   const [stockDividend, setStockDividend] = useState<number | "">("");
+  const [stockCostBasis, setStockCostBasis] = useState<number | "">("");
 
   // Asset Edit State
   const [assetEditOpen, setAssetEditOpen] = useState(false);
@@ -348,15 +523,24 @@ const ScenarioDetail: React.FC = () => {
     setReMortgageTerm(30);
     setReCurrentYear(1);
     setReIsInterestOnly(false);
+    setRePurchasePrice("");
+    setReLandValue("");
+    setReDepreciationMethod("none");
+    setReDepreciationStartYear("");
+    setReAccumulatedDepreciation("");
+    setRePrimaryResidenceStartAge("");
+    setRePrimaryResidenceEndAge("");
     setGeAccountType("taxable");
     setGeAccountBalance("");
     setGeExpectedReturnRate("");
     setGeFeeRate("");
+    setGeCostBasis("");
     setStockTicker("");
     setStockShares("");
     setStockPrice("");
     setStockAppreciation("");
     setStockDividend("");
+    setStockCostBasis("");
     setEditingAssetId(null);
   };
 
@@ -367,6 +551,7 @@ const ScenarioDetail: React.FC = () => {
     setNewIncomeEndAge("");
     setNewIncomeAppreciation("");
     setNewIncomeType("income");
+    setNewIncomeTaxType("ordinary");
     setNewIncomeLinkedAsset("");
     setEditingIncomeId(null);
   };
@@ -386,7 +571,8 @@ const ScenarioDetail: React.FC = () => {
         inflation_rate: s.inflation_rate,
         bond_return_rate: s.bond_return_rate,
         annual_contribution_pre_retirement: s.annual_contribution_pre_retirement,
-        annual_spending_in_retirement: s.annual_spending_in_retirement
+        annual_spending_in_retirement: s.annual_spending_in_retirement,
+        filing_status: s.filing_status
       });
       const a = await getAssets(scenarioId);
       setAssets(a);
@@ -423,6 +609,13 @@ const ScenarioDetail: React.FC = () => {
           mortgage_term_years: reMortgageTerm === "" ? 30 : Number(reMortgageTerm),
           mortgage_current_year: reCurrentYear === "" ? 1 : Number(reCurrentYear),
           is_interest_only: reIsInterestOnly,
+          purchase_price: rePurchasePrice === "" ? (rePropertyValue === "" ? 0 : Number(rePropertyValue)) : Number(rePurchasePrice),
+          land_value: reLandValue === "" ? 0 : Number(reLandValue),
+          depreciation_method: reDepreciationMethod,
+          depreciation_start_year: reDepreciationStartYear === "" ? null : Number(reDepreciationStartYear),
+          accumulated_depreciation: reAccumulatedDepreciation === "" ? 0 : Number(reAccumulatedDepreciation),
+          primary_residence_start_age: rePrimaryResidenceStartAge === "" ? null : Number(rePrimaryResidenceStartAge),
+          primary_residence_end_age: rePrimaryResidenceEndAge === "" ? null : Number(rePrimaryResidenceEndAge),
         },
       };
     } else if (newAssetType === "general_equity") {
@@ -436,6 +629,7 @@ const ScenarioDetail: React.FC = () => {
           account_balance: Number(geAccountBalance),
           expected_return_rate: geExpectedReturnRate === "" ? 0 : Number(geExpectedReturnRate),
           fee_rate: geFeeRate === "" ? 0 : Number(geFeeRate),
+          cost_basis: geCostBasis === "" ? (geAccountType === "taxable" ? Number(geAccountBalance) : 0) : Number(geCostBasis),
         },
       };
     } else {
@@ -451,6 +645,7 @@ const ScenarioDetail: React.FC = () => {
           current_price: Number(stockPrice),
           assumed_appreciation_rate: stockAppreciation === "" ? 0 : Number(stockAppreciation),
           dividend_yield: stockDividend === "" ? 0 : Number(stockDividend),
+          cost_basis: stockCostBasis === "" ? (Number(stockShares) * Number(stockPrice)) : Number(stockCostBasis),
         }
       };
     }
@@ -498,16 +693,24 @@ const ScenarioDetail: React.FC = () => {
       setReMortgageBalance(d.mortgage_balance || "");
       setReInterestRate(d.interest_rate || "");
       setReAnnualRent(d.annual_rent || "");
-      setReAppreciationRate(d.appreciation_rate || "");
+      setReAppreciationRate(d.appreciation_rate !== undefined && d.appreciation_rate !== null ? d.appreciation_rate : "");
       setReMortgageTerm(d.mortgage_term_years || 30);
       setReCurrentYear(d.mortgage_current_year || 1);
       setReIsInterestOnly(d.is_interest_only || false);
+      setRePurchasePrice((d as any).purchase_price || "");
+      setReLandValue((d as any).land_value || "");
+      setReDepreciationMethod((d as any).depreciation_method || "none");
+      setReDepreciationStartYear((d as any).depreciation_start_year || "");
+      setReAccumulatedDepreciation((d as any).accumulated_depreciation || "");
+      setRePrimaryResidenceStartAge((d as any).primary_residence_start_age || "");
+      setRePrimaryResidenceEndAge((d as any).primary_residence_end_age || "");
     } else if (asset.type === "general_equity" && asset.general_equity_details) {
       const d = asset.general_equity_details;
       setGeAccountType(d.account_type || "taxable");
       setGeAccountBalance(d.account_balance);
       setGeExpectedReturnRate(d.expected_return_rate || "");
       setGeFeeRate(d.fee_rate || "");
+      setGeCostBasis((d as any).cost_basis || "");
     } else if (asset.type === "specific_stock" && asset.specific_stock_details) {
       const d = asset.specific_stock_details;
       setStockTicker(d.ticker || "");
@@ -515,6 +718,7 @@ const ScenarioDetail: React.FC = () => {
       setStockPrice(d.current_price);
       setStockAppreciation(d.assumed_appreciation_rate || "");
       setStockDividend(d.dividend_yield || "");
+      setStockCostBasis((d as any).cost_basis || "");
     }
 
     setAssetEditOpen(true);
@@ -524,16 +728,20 @@ const ScenarioDetail: React.FC = () => {
     if (!scenario) return;
     
     // Validation
-    if (newIncomeType === "drawdown" && (newIncomeLinkedAsset === "" || newIncomeLinkedAsset === 0)) {
-      alert("Please select an asset to sell/drawdown.");
+    if ((newIncomeType === "drawdown" || newIncomeType === "house_sale") && (newIncomeLinkedAsset === "" || newIncomeLinkedAsset === 0)) {
+      alert(`Please select an asset to ${newIncomeType === "house_sale" ? "sell" : "sell/drawdown"}.`);
       return;
     }
 
-    // Auto-generate name if empty for drawdown
+    // Auto-generate name if empty for drawdown or house_sale
     let finalName = newIncomeName.trim();
-    if (newIncomeType === "drawdown" && !finalName) {
+    if ((newIncomeType === "drawdown" || newIncomeType === "house_sale") && !finalName) {
       const asset = assets.find(a => a.id === Number(newIncomeLinkedAsset));
-      finalName = asset ? `Drawdown from ${asset.name}` : "Asset Drawdown";
+      if (newIncomeType === "house_sale") {
+        finalName = asset ? `Sale of ${asset.name}` : "House Sale";
+      } else {
+        finalName = asset ? `Drawdown from ${asset.name}` : "Asset Drawdown";
+      }
     }
 
     if (!finalName) {
@@ -541,7 +749,7 @@ const ScenarioDetail: React.FC = () => {
       return;
     }
 
-    if (newIncomeAmount === "" || isNaN(Number(newIncomeAmount))) {
+    if (newIncomeType !== "house_sale" && (newIncomeAmount === "" || isNaN(Number(newIncomeAmount)))) {
       alert("Please enter a valid Annual Amount.");
       return;
     }
@@ -549,19 +757,20 @@ const ScenarioDetail: React.FC = () => {
       alert("Please enter a Start Age.");
       return;
     }
-    if (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge))) {
+    if (newIncomeType !== "house_sale" && (newIncomeEndAge === "" || isNaN(Number(newIncomeEndAge)))) {
       alert("Please enter an End Age.");
       return;
     }
 
     const payload = {
       name: finalName,
-      amount: Number(newIncomeAmount),
+      amount: newIncomeType === "house_sale" ? 0 : Number(newIncomeAmount), // Amount not used for house_sale
       start_age: Number(newIncomeStartAge),
-      end_age: Number(newIncomeEndAge),
-      appreciation_rate: newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation),
+      end_age: newIncomeType === "house_sale" ? Number(newIncomeStartAge) : Number(newIncomeEndAge), // For house_sale, end_age = start_age (one-time sale)
+      appreciation_rate: newIncomeType === "house_sale" ? 0 : (newIncomeAppreciation === "" ? 0 : Number(newIncomeAppreciation)),
       source_type: newIncomeType,
-      linked_asset_id: newIncomeType === "drawdown" && newIncomeLinkedAsset !== "" ? Number(newIncomeLinkedAsset) : null,
+      linked_asset_id: ((newIncomeType === "drawdown" || newIncomeType === "house_sale") && newIncomeLinkedAsset !== "") ? Number(newIncomeLinkedAsset) : null,
+      income_type: newIncomeType === "income" ? newIncomeTaxType : "ordinary",  // Only apply tax type to non-drawdown/house_sale income
     };
 
     try {
@@ -577,8 +786,10 @@ const ScenarioDetail: React.FC = () => {
       // Reset form
       resetIncomeForm();
       setAddIncomeSourceOpen(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving income source", error);
+      const errorMessage = error?.response?.data?.detail || error?.message || "Failed to save income source";
+      alert(`Error: ${errorMessage}`);
     }
   };
 
@@ -590,6 +801,7 @@ const ScenarioDetail: React.FC = () => {
     setNewIncomeEndAge(income.end_age);
     setNewIncomeAppreciation(income.appreciation_rate);
     setNewIncomeType(income.source_type || "income");
+    setNewIncomeTaxType(income.income_type || "ordinary");
     setNewIncomeLinkedAsset(income.linked_asset_id || "");
     setAddIncomeSourceOpen(true);
   };
@@ -647,15 +859,22 @@ const ScenarioDetail: React.FC = () => {
     reMortgageTerm, setReMortgageTerm,
     reCurrentYear, setReCurrentYear,
     reIsInterestOnly, setReIsInterestOnly,
+    rePurchasePrice, setRePurchasePrice,
+    reLandValue, setReLandValue,
+    reDepreciationMethod, setReDepreciationMethod,
+    reDepreciationStartYear, setReDepreciationStartYear,
+    reAccumulatedDepreciation, setReAccumulatedDepreciation,
     geAccountType, setGeAccountType,
     geAccountBalance, setGeAccountBalance,
     geExpectedReturnRate, setGeExpectedReturnRate,
     geFeeRate, setGeFeeRate,
+    geCostBasis, setGeCostBasis,
     stockTicker, setStockTicker,
     stockShares, setStockShares,
     stockPrice, setStockPrice,
     stockAppreciation, setStockAppreciation,
-    stockDividend, setStockDividend
+    stockDividend, setStockDividend,
+    stockCostBasis, setStockCostBasis
   };
 
   // Calculate fixed width for chart and table alignment
@@ -732,11 +951,20 @@ const ScenarioDetail: React.FC = () => {
                       <TableCell>Name</TableCell>
                       <TableCell>Type</TableCell>
                       <TableCell align="right">Balance</TableCell>
+                      <TableCell align="right">Cost Basis</TableCell>
                       <TableCell align="right">Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {assets.map(asset => (
+                    {assets.map(asset => {
+                      const costBasis = asset.type === 'general_equity' && asset.general_equity_details 
+                        ? (asset.general_equity_details as any).cost_basis 
+                        : asset.type === 'specific_stock' && asset.specific_stock_details
+                        ? (asset.specific_stock_details as any).cost_basis
+                        : null;
+                      const showCostBasis = costBasis !== null && costBasis !== undefined && costBasis > 0;
+                      
+                      return (
                       <TableRow key={asset.id}>
                         <TableCell>{asset.name}</TableCell>
                         <TableCell>
@@ -746,6 +974,9 @@ const ScenarioDetail: React.FC = () => {
                         </TableCell>
                         <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
                         <TableCell align="right">
+                          {showCostBasis ? formatCurrency(costBasis) : '-'}
+                        </TableCell>
+                        <TableCell align="right">
                           <IconButton size="small" onClick={() => handleEditAssetClick(asset)}>
                             <EditIcon fontSize="small" />
                           </IconButton>
@@ -754,10 +985,11 @@ const ScenarioDetail: React.FC = () => {
                           </IconButton>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                     {assets.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} align="center">No assets added yet.</TableCell>
+                        <TableCell colSpan={5} align="center">No assets added yet.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -924,6 +1156,24 @@ const ScenarioDetail: React.FC = () => {
                 allowNegative={false}
               />
             </Grid>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Tax Filing Status</InputLabel>
+                <Select
+                  value={editScenario.filing_status || 'married_filing_jointly'}
+                  label="Tax Filing Status"
+                  onChange={(e) => setEditScenario(prev => ({
+                    ...prev,
+                    filing_status: e.target.value as FilingStatus
+                  }))}
+                >
+                  <MenuItem value="single">Single</MenuItem>
+                  <MenuItem value="married_filing_jointly">Married Filing Jointly</MenuItem>
+                  <MenuItem value="married_filing_separately">Married Filing Separately</MenuItem>
+                  <MenuItem value="head_of_household">Head of Household</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
@@ -971,10 +1221,11 @@ const ScenarioDetail: React.FC = () => {
                 <Select
                   value={newIncomeType}
                   label="Type"
-                  onChange={(e) => setNewIncomeType(e.target.value as "income" | "drawdown")}
+                  onChange={(e) => setNewIncomeType(e.target.value as "income" | "drawdown" | "house_sale")}
                 >
                   <MenuItem value="income">Income Stream (e.g. Pension)</MenuItem>
                   <MenuItem value="drawdown">Asset Drawdown (Sell Asset)</MenuItem>
+                  <MenuItem value="house_sale">House Sale</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -995,22 +1246,71 @@ const ScenarioDetail: React.FC = () => {
                 </FormControl>
               </Grid>
             )}
+            
+            {newIncomeType === "house_sale" && (
+              <Grid item xs={12}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Property to Sell</InputLabel>
+                  <Select
+                    value={newIncomeLinkedAsset}
+                    label="Property to Sell"
+                    onChange={(e) => setNewIncomeLinkedAsset(Number(e.target.value))}
+                  >
+                    {assets.filter(a => a.type === "real_estate").map(a => (
+                      <MenuItem key={a.id} value={a.id}>{a.name} ({formatCurrency(a.current_balance)})</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Sale proceeds will be calculated automatically based on property value, appreciation, mortgage balance, and tax treatment.
+                </Typography>
+              </Grid>
+            )}
+
+            {newIncomeType === "income" && (
+              <Grid item xs={12}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Tax Treatment</InputLabel>
+                  <Select
+                    value={newIncomeTaxType}
+                    label="Tax Treatment"
+                    onChange={(e) => setNewIncomeTaxType(e.target.value as IncomeType)}
+                  >
+                    <MenuItem value="ordinary">Ordinary Income (Fully Taxable)</MenuItem>
+                    <MenuItem value="social_security">Social Security Benefits</MenuItem>
+                    <MenuItem value="tax_exempt">Tax Exempt (e.g., VA Disability)</MenuItem>
+                    <MenuItem value="disability">Disability Income (Tax Exempt)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
 
             <Grid item xs={12}>
-              <TextField fullWidth label={newIncomeType === "drawdown" ? "Description" : "Name"} value={newIncomeName} onChange={(e) => setNewIncomeName(e.target.value)} />
+              <TextField fullWidth label={newIncomeType === "drawdown" || newIncomeType === "house_sale" ? "Description" : "Name"} value={newIncomeName} onChange={(e) => setNewIncomeName(e.target.value)} />
             </Grid>
+            {newIncomeType !== "house_sale" && (
+              <Grid item xs={6}>
+                <CurrencyInput label={newIncomeType === "drawdown" ? "Annual Drawdown" : "Annual Amount"} value={newIncomeAmount} onChange={setNewIncomeAmount} required />
+              </Grid>
+            )}
+            {newIncomeType !== "house_sale" && (
+              <Grid item xs={6}>
+                <TextField fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />
+              </Grid>
+            )}
             <Grid item xs={6}>
-              <CurrencyInput label={newIncomeType === "drawdown" ? "Annual Drawdown" : "Annual Amount"} value={newIncomeAmount} onChange={setNewIncomeAmount} required />
+              <TextField fullWidth type="number" label={newIncomeType === "house_sale" ? "Sale Age" : "Start Age"} value={newIncomeStartAge} onChange={(e) => setNewIncomeStartAge(e.target.value)} required />
             </Grid>
-            <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />
-            </Grid>
-            <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Start Age" value={newIncomeStartAge} onChange={(e) => setNewIncomeStartAge(e.target.value)} required />
-            </Grid>
-            <Grid item xs={6}>
-              <TextField fullWidth type="number" label="End Age" value={newIncomeEndAge} onChange={(e) => setNewIncomeEndAge(e.target.value)} required />
-            </Grid>
+            {newIncomeType !== "house_sale" && (
+              <Grid item xs={6}>
+                <TextField fullWidth type="number" label="End Age" value={newIncomeEndAge} onChange={(e) => setNewIncomeEndAge(e.target.value)} required />
+              </Grid>
+            )}
+            {newIncomeType === "house_sale" && (
+              <Grid item xs={6}>
+                <TextField fullWidth type="number" label="End Age (same as Sale Age)" value={newIncomeStartAge} disabled />
+              </Grid>
+            )}
           </Grid>
         </DialogContent>
         <DialogActions>

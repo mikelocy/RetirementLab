@@ -12,23 +12,19 @@ from backend.models import Scenario, Asset, IncomeSource, GeneralEquityDetails, 
 from backend.simulation import run_simple_bond_simulation
 from backend.tax_engine import calculate_taxes, TaxableIncomeBreakdown
 from backend.tax_config import FilingStatus
+from .test_helpers import cleanup_test_scenarios
 
 class TestSimulationIntegration(unittest.TestCase):
     def setUp(self):
-        # Use a separate test DB or re-initialize
-        # For simplicity in this setup, we'll just init_db.
-        
-        # FORCE DELETE DB
-        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "retirement_lab_v3.db")
-        if os.path.exists(db_path):
-            try:
-                os.remove(db_path)
-            except PermissionError:
-                pass
+        # Initialize DB (don't delete - preserve user scenarios)
         init_db()
         self.session = Session(engine)
+        # Clean up any leftover test scenarios from previous runs
+        cleanup_test_scenarios(self.session)
 
     def tearDown(self):
+        # Clean up test scenarios created during this test run
+        cleanup_test_scenarios(self.session)
         self.session.close()
 
     def test_simulation_tax_integration(self):

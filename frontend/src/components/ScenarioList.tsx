@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { 
   Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, 
-  Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Box, IconButton 
+  Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, Box, IconButton,
+  FormControl, InputLabel, Select, MenuItem
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { NumericFormat } from 'react-number-format';
 import { useNavigate } from 'react-router-dom';
 import { getScenarios, createScenario, deleteScenario } from '../api/client';
-import { Scenario, ScenarioCreate } from '../types';
+import { Scenario, ScenarioCreate, FilingStatus } from '../types';
 
 const ScenarioList: React.FC = () => {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -23,7 +24,8 @@ const ScenarioList: React.FC = () => {
     inflation_rate: 0.03,
     bond_return_rate: 0.04,
     annual_contribution_pre_retirement: 20000,
-    annual_spending_in_retirement: 120000
+    annual_spending_in_retirement: 120000,
+    filing_status: 'married_filing_jointly'
   });
 
   const fetchScenarios = async () => {
@@ -176,6 +178,24 @@ const ScenarioList: React.FC = () => {
                 decimalScale={0}
                 allowNegative={false}
               />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Tax Filing Status</InputLabel>
+                <Select
+                  value={newScenario.filing_status || 'married_filing_jointly'}
+                  label="Tax Filing Status"
+                  onChange={(e) => setNewScenario(prev => ({
+                    ...prev,
+                    filing_status: e.target.value as FilingStatus
+                  }))}
+                >
+                  <MenuItem value="single">Single</MenuItem>
+                  <MenuItem value="married_filing_jointly">Married Filing Jointly</MenuItem>
+                  <MenuItem value="married_filing_separately">Married Filing Separately</MenuItem>
+                  <MenuItem value="head_of_household">Head of Household</MenuItem>
+                </Select>
+              </FormControl>
             </Grid>
           </Grid>
         </DialogContent>

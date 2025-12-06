@@ -54,6 +54,30 @@ FEDERAL_ORDINARY_TABLES: Dict[int, Dict[FilingStatus, TaxTable]] = {
                 TaxBracket(up_to=609350.0, rate=0.35),
                 TaxBracket(up_to=float("inf"), rate=0.37),
              ]
+        ),
+        FilingStatus.MARRIED_FILING_SEPARATELY: TaxTable(
+            standard_deduction=14600.0,
+            brackets=[
+                TaxBracket(up_to=11600.0, rate=0.10),
+                TaxBracket(up_to=47150.0, rate=0.12),
+                TaxBracket(up_to=100525.0, rate=0.22),
+                TaxBracket(up_to=191950.0, rate=0.24),
+                TaxBracket(up_to=243725.0, rate=0.32),
+                TaxBracket(up_to=365600.0, rate=0.35),
+                TaxBracket(up_to=float("inf"), rate=0.37),
+            ]
+        ),
+        FilingStatus.HEAD_OF_HOUSEHOLD: TaxTable(
+            standard_deduction=21900.0,
+            brackets=[
+                TaxBracket(up_to=16550.0, rate=0.10),
+                TaxBracket(up_to=63100.0, rate=0.12),
+                TaxBracket(up_to=100500.0, rate=0.22),
+                TaxBracket(up_to=191950.0, rate=0.24),
+                TaxBracket(up_to=243700.0, rate=0.32),
+                TaxBracket(up_to=609350.0, rate=0.35),
+                TaxBracket(up_to=float("inf"), rate=0.37),
+            ]
         )
     }
 }
@@ -81,6 +105,22 @@ FEDERAL_LTCG_TABLES: Dict[int, Dict[FilingStatus, TaxTable]] = {
                 TaxBracket(up_to=518900.0, rate=0.15),
                 TaxBracket(up_to=float("inf"), rate=0.20),
             ]
+        ),
+        FilingStatus.MARRIED_FILING_SEPARATELY: TaxTable(
+            standard_deduction=0.0,
+            brackets=[
+                TaxBracket(up_to=47025.0, rate=0.00),
+                TaxBracket(up_to=291850.0, rate=0.15),
+                TaxBracket(up_to=float("inf"), rate=0.20),
+            ]
+        ),
+        FilingStatus.HEAD_OF_HOUSEHOLD: TaxTable(
+            standard_deduction=0.0,
+            brackets=[
+                TaxBracket(up_to=63100.0, rate=0.00),
+                TaxBracket(up_to=551350.0, rate=0.15),
+                TaxBracket(up_to=float("inf"), rate=0.20),
+            ]
         )
     }
 }
@@ -106,6 +146,48 @@ STATE_CA_ORDINARY_TABLES: Dict[int, Dict[FilingStatus, TaxTable]] = {
                 # Note: 1% Mental Health Services Tax applies > $1M taxable income, effectively handled as bracket or surcharge.
                 # Included in top brackets for simplicity here (11.3 -> 12.3 above 1M ish? CA is complex).
                 # Simplified for this exercise.
+            ]
+        ),
+        FilingStatus.SINGLE: TaxTable(
+            standard_deduction=5363.0,
+            brackets=[
+                TaxBracket(up_to=10412.0, rate=0.01),
+                TaxBracket(up_to=24684.0, rate=0.02),
+                TaxBracket(up_to=38959.0, rate=0.04),
+                TaxBracket(up_to=54081.0, rate=0.06),
+                TaxBracket(up_to=68346.0, rate=0.08),
+                TaxBracket(up_to=349136.0, rate=0.093),
+                TaxBracket(up_to=418961.0, rate=0.103),
+                TaxBracket(up_to=698271.0, rate=0.113),
+                TaxBracket(up_to=float("inf"), rate=0.123),
+            ]
+        ),
+        FilingStatus.MARRIED_FILING_SEPARATELY: TaxTable(
+            standard_deduction=5363.0,
+            brackets=[
+                TaxBracket(up_to=10412.0, rate=0.01),
+                TaxBracket(up_to=24684.0, rate=0.02),
+                TaxBracket(up_to=38959.0, rate=0.04),
+                TaxBracket(up_to=54081.0, rate=0.06),
+                TaxBracket(up_to=68346.0, rate=0.08),
+                TaxBracket(up_to=349136.0, rate=0.093),
+                TaxBracket(up_to=418961.0, rate=0.103),
+                TaxBracket(up_to=698271.0, rate=0.113),
+                TaxBracket(up_to=float("inf"), rate=0.123),
+            ]
+        ),
+        FilingStatus.HEAD_OF_HOUSEHOLD: TaxTable(
+            standard_deduction=10726.0,
+            brackets=[
+                TaxBracket(up_to=20824.0, rate=0.01),
+                TaxBracket(up_to=49368.0, rate=0.02),
+                TaxBracket(up_to=77918.0, rate=0.04),
+                TaxBracket(up_to=108162.0, rate=0.06),
+                TaxBracket(up_to=136692.0, rate=0.08),
+                TaxBracket(up_to=698272.0, rate=0.093),
+                TaxBracket(up_to=837922.0, rate=0.103),
+                TaxBracket(up_to=1396542.0, rate=0.113),
+                TaxBracket(up_to=float("inf"), rate=0.123),
             ]
         )
     }

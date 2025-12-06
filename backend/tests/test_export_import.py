@@ -11,24 +11,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.database import engine, init_db
 from backend.models import Scenario, Asset, IncomeSource, RealEstateDetails, GeneralEquityDetails, TaxWrapper
 from backend.export_import import export_scenario, import_scenario
+from .test_helpers import cleanup_test_scenarios
 
 class TestExportImport(unittest.TestCase):
     def setUp(self):
-        # Use a separate test DB or re-initialize
-        # For simplicity in this setup, we'll just init_db.
-        # In a real app, use a dedicated test db file or in-memory sqlite.
-        
-        # FORCE DELETE DB
-        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "retirement_lab_v3.db")
-        if os.path.exists(db_path):
-            try:
-                os.remove(db_path)
-            except PermissionError:
-                pass
+        # Initialize DB (don't delete - preserve user scenarios)
         init_db()
         self.session = Session(engine)
+        # Clean up any leftover test scenarios from previous runs
+        cleanup_test_scenarios(self.session)
 
     def tearDown(self):
+        # Clean up test scenarios created during this test run
+        cleanup_test_scenarios(self.session)
         self.session.close()
 
     def test_export_import_flow(self):

@@ -1,3 +1,5 @@
+export type FilingStatus = "single" | "married_filing_jointly" | "married_filing_separately" | "head_of_household";
+
 export interface Scenario {
   id: number;
   name: string;
@@ -9,6 +11,7 @@ export interface Scenario {
   bond_return_rate: number;
   annual_contribution_pre_retirement: number;
   annual_spending_in_retirement: number;
+  filing_status: FilingStatus;
   created_at: string;
   updated_at: string;
 }
@@ -23,6 +26,7 @@ export interface ScenarioCreate {
   bond_return_rate: number;
   annual_contribution_pre_retirement: number;
   annual_spending_in_retirement: number;
+  filing_status?: FilingStatus;
 }
 
 export type AssetType = "real_estate" | "general_equity" | "specific_stock";
@@ -33,12 +37,15 @@ export interface SpecificStockDetailsCreate {
   current_price: number;
   assumed_appreciation_rate?: number;
   dividend_yield?: number;
+  cost_basis?: number; // Original purchase price per share * shares
 }
 
 export interface SpecificStockDetailsRead extends SpecificStockDetailsCreate {
   id: number;
   asset_id: number;
 }
+
+export type DepreciationMethod = "none" | "residential_27_5" | "commercial_39";
 
 export interface RealEstateDetailsCreate {
   property_type?: string; // e.g. "primary" | "rental" | "land"
@@ -53,6 +60,16 @@ export interface RealEstateDetailsCreate {
   mortgage_term_years?: number;
   mortgage_current_year?: number;
   is_interest_only?: boolean;
+  // Tax-related fields
+  purchase_price?: number; // Original acquisition cost
+  land_value?: number; // Portion that's land (not depreciable)
+  depreciation_method?: DepreciationMethod;
+  depreciation_start_year?: number | null; // Year depreciation began
+  accumulated_depreciation?: number; // Total depreciation taken to date
+  // Property sale fields
+  sale_age?: number | null; // Age at which property will be sold
+  primary_residence_start_age?: number | null; // Age when property became primary residence
+  primary_residence_end_age?: number | null; // Age when property stopped being primary residence
 }
 
 export interface GeneralEquityDetailsCreate {
@@ -61,6 +78,7 @@ export interface GeneralEquityDetailsCreate {
   expected_return_rate?: number;
   fee_rate?: number;
   annual_contribution?: number;
+  cost_basis?: number; // For taxable accounts - original purchase price
 }
 
 export interface RealEstateDetailsRead extends RealEstateDetailsCreate {
@@ -73,14 +91,17 @@ export interface GeneralEquityDetailsRead extends GeneralEquityDetailsCreate {
   asset_id: number;
 }
 
+export type IncomeType = "ordinary" | "social_security" | "tax_exempt" | "disability";
+
 export interface IncomeSourceCreate {
   name: string;
   amount: number;
   start_age: number;
   end_age: number;
   appreciation_rate?: number;
-  source_type?: "income" | "drawdown";
+  source_type?: "income" | "drawdown" | "house_sale";
   linked_asset_id?: number | null;
+  income_type?: IncomeType;
 }
 
 export interface IncomeSource {
@@ -91,8 +112,9 @@ export interface IncomeSource {
   start_age: number;
   end_age: number;
   appreciation_rate: number;
-  source_type: "income" | "drawdown";
+  source_type: "income" | "drawdown" | "house_sale";
   linked_asset_id?: number | null;
+  income_type: IncomeType;
 }
 
 export interface Asset {

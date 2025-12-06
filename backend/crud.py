@@ -1,7 +1,29 @@
 from sqlmodel import Session, select, delete
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType
 from .schemas import ScenarioCreate, AssetCreate, RealEstateDetailsCreate, GeneralEquityDetailsCreate, SpecificStockDetailsCreate, IncomeSourceCreate
 from datetime import datetime
+
+def infer_tax_wrapper_from_account_type(account_type: str, current_tax_wrapper: TaxWrapper = TaxWrapper.TAXABLE) -> TaxWrapper:
+    """
+    Infer tax_wrapper from account_type if tax_wrapper wasn't explicitly set.
+    This handles cases where the frontend only sends account_type (e.g., "roth", "ira").
+    """
+    # Only infer if tax_wrapper is still at default (TAXABLE)
+    # This allows explicit tax_wrapper values to override account_type
+    if current_tax_wrapper != TaxWrapper.TAXABLE:
+        return current_tax_wrapper
+    
+    account_type_lower = account_type.lower() if account_type else ""
+    
+    if account_type_lower in ("roth", "roth ira", "roth 401k"):
+        return TaxWrapper.ROTH
+    elif account_type_lower in ("ira", "traditional ira", "401k", "401(k)", "403b", "457", "traditional"):
+        return TaxWrapper.TRADITIONAL
+    elif account_type_lower in ("taxable", "brokerage", "individual"):
+        return TaxWrapper.TAXABLE
+    else:
+        # Default to TAXABLE if unknown
+        return TaxWrapper.TAXABLE
 
 def get_scenarios(session: Session):
     statement = select(Scenario)
@@ -99,13 +121,27 @@ def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCrea
         if asset_type == "real_estate" and asset_data.real_estate_details:
             re_details = RealEstateDetails(
                 asset_id=asset.id,
-                **asset_data.real_estate_details.dict()
+                **asset_data.real_estate_details.dict(exclude_unset=False)
             )
             session.add(re_details)
         elif asset_type == "general_equity" and asset_data.general_equity_details:
+            ge_data = asset_data.general_equity_details.dict()
+            # Infer tax_wrapper from account_type if not explicitly set or still at default
+            # This handles cases where frontend only sends account_type (e.g., "roth", "ira")
+            if "tax_wrapper" not in ge_data:
+                # tax_wrapper not provided - infer from account_type
+                account_type = ge_data.get("account_type", "taxable")
+                ge_data["tax_wrapper"] = infer_tax_wrapper_from_account_type(account_type, TaxWrapper.TAXABLE)
+            elif ge_data.get("tax_wrapper") == TaxWrapper.TAXABLE and "account_type" in ge_data:
+                # tax_wrapper is default TAXABLE but account_type suggests otherwise - infer from account_type
+                account_type = ge_data.get("account_type", "taxable")
+                inferred = infer_tax_wrapper_from_account_type(account_type, TaxWrapper.TAXABLE)
+                if inferred != TaxWrapper.TAXABLE:
+                    ge_data["tax_wrapper"] = inferred
+            
             ge_details = GeneralEquityDetails(
                 asset_id=asset.id,
-                **asset_data.general_equity_details.dict()
+                **ge_data
             )
             session.add(ge_details)
         elif asset_type == "specific_stock" and asset_data.specific_stock_details:
@@ -142,13 +178,14 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
         
         # Update or create details
         if db_asset.real_estate_details:
-            for key, value in asset_data.real_estate_details.dict().items():
+            # Use dict(exclude_unset=False) to include all fields, even if None
+            for key, value in asset_data.real_estate_details.dict(exclude_unset=False).items():
                 setattr(db_asset.real_estate_details, key, value)
             session.add(db_asset.real_estate_details)
         else:
             re_details = RealEstateDetails(
                 asset_id=db_asset.id,
-                **asset_data.real_estate_details.dict()
+                **asset_data.real_estate_details.dict(exclude_unset=False)
             )
             session.add(re_details)
             
@@ -162,14 +199,28 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
             
         db_asset.current_balance = asset_data.general_equity_details.account_balance
         
+        ge_data = asset_data.general_equity_details.dict()
+        # Infer tax_wrapper from account_type if not explicitly set or still at default
+        # This handles cases where frontend only sends account_type (e.g., "roth", "ira")
+        if "tax_wrapper" not in ge_data:
+            # tax_wrapper not provided - infer from account_type
+            account_type = ge_data.get("account_type", "taxable")
+            ge_data["tax_wrapper"] = infer_tax_wrapper_from_account_type(account_type, TaxWrapper.TAXABLE)
+        elif ge_data.get("tax_wrapper") == TaxWrapper.TAXABLE and "account_type" in ge_data:
+            # tax_wrapper is default TAXABLE but account_type suggests otherwise - infer from account_type
+            account_type = ge_data.get("account_type", "taxable")
+            inferred = infer_tax_wrapper_from_account_type(account_type, TaxWrapper.TAXABLE)
+            if inferred != TaxWrapper.TAXABLE:
+                ge_data["tax_wrapper"] = inferred
+        
         if db_asset.general_equity_details:
-            for key, value in asset_data.general_equity_details.dict().items():
+            for key, value in ge_data.items():
                 setattr(db_asset.general_equity_details, key, value)
             session.add(db_asset.general_equity_details)
         else:
             ge_details = GeneralEquityDetails(
                 asset_id=db_asset.id,
-                **asset_data.general_equity_details.dict()
+                **ge_data
             )
             session.add(ge_details)
             
@@ -229,7 +280,19 @@ def get_assets_for_scenario(session: Session, scenario_id: int):
     return session.exec(statement).all()
 
 def create_income_source(session: Session, income_source: IncomeSourceCreate, scenario_id: int):
-    db_income_source = IncomeSource(scenario_id=scenario_id, **income_source.dict())
+    source_data = income_source.dict()
+    # Ensure income_type is properly set (handle string to enum conversion)
+    if "income_type" in source_data:
+        income_type_val = source_data["income_type"]
+        if isinstance(income_type_val, str):
+            try:
+                source_data["income_type"] = IncomeType(income_type_val.lower())
+            except ValueError:
+                source_data["income_type"] = IncomeType.ORDINARY  # Default if invalid
+    else:
+        source_data["income_type"] = IncomeType.ORDINARY  # Default if not provided
+    
+    db_income_source = IncomeSource(scenario_id=scenario_id, **source_data)
     session.add(db_income_source)
     session.commit()
     session.refresh(db_income_source)
@@ -252,6 +315,16 @@ def update_income_source(session: Session, income_source_id: int, income_source_
     if not db_income_source:
         return None
     source_data = income_source_update.dict(exclude_unset=True)
+    
+    # Handle income_type conversion if present
+    if "income_type" in source_data:
+        income_type_val = source_data["income_type"]
+        if isinstance(income_type_val, str):
+            try:
+                source_data["income_type"] = IncomeType(income_type_val.lower())
+            except ValueError:
+                source_data["income_type"] = IncomeType.ORDINARY  # Default if invalid
+    
     for key, value in source_data.items():
         setattr(db_income_source, key, value)
     session.add(db_income_source)
