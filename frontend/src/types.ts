@@ -5,6 +5,7 @@ export interface Scenario {
   name: string;
   description?: string | null;
   current_age: number;
+  base_year?: number | null;  // Calendar year corresponding to current_age
   retirement_age: number;
   end_age: number;
   inflation_rate: number;
@@ -20,6 +21,7 @@ export interface ScenarioCreate {
   name: string;
   description?: string | null;
   current_age: number;
+  base_year?: number | null;  // Calendar year corresponding to current_age
   retirement_age: number;
   end_age: number;
   inflation_rate: number;
@@ -29,7 +31,7 @@ export interface ScenarioCreate {
   filing_status?: FilingStatus;
 }
 
-export type AssetType = "real_estate" | "general_equity" | "specific_stock";
+export type AssetType = "real_estate" | "general_equity" | "specific_stock" | "rsu_grant";
 
 export interface SpecificStockDetailsCreate {
   ticker: string;
@@ -43,6 +45,8 @@ export interface SpecificStockDetailsCreate {
 export interface SpecificStockDetailsRead extends SpecificStockDetailsCreate {
   id: number;
   asset_id: number;
+  source_type?: string;
+  source_rsu_grant_id?: number | null;
 }
 
 export type DepreciationMethod = "none" | "residential_27_5" | "commercial_39";
@@ -117,6 +121,116 @@ export interface IncomeSource {
   income_type: IncomeType;
 }
 
+// Security/Ticker types
+export interface Security {
+  id: number;
+  symbol: string;
+  name?: string | null;
+  assumed_appreciation_rate: number;  // Expected annual return (e.g., 0.07 = 7%)
+}
+
+export interface SecurityCreate {
+  symbol: string;
+  name?: string | null;
+  assumed_appreciation_rate?: number;  // Optional, defaults to 0.0
+}
+
+// RSU Vesting Tranche types
+export interface RSUVestingTrancheCreate {
+  vesting_date: string; // ISO date string
+  percentage_of_grant: number; // 0-1, e.g., 0.25 for 25%
+}
+
+export interface RSUVestingTrancheRead extends RSUVestingTrancheCreate {
+  id: number;
+  grant_id: number;
+}
+
+// RSU Grant Details types
+export interface RSUGrantDetailsCreate {
+  employer?: string | null;
+  security_id: number;
+  grant_date: string; // ISO date string
+  grant_value_type?: string; // "dollar_value"
+  grant_value: number;
+  grant_fmv_at_grant: number; // Fair market value per share at grant
+  shares_granted?: number; // Computed: grant_value / grant_fmv_at_grant
+  estimated_share_withholding_rate?: number; // Default 0.37 - used only to estimate net shares delivered at vesting
+  vesting_tranches: RSUVestingTrancheCreate[];
+}
+
+export interface RSUGrantDetailsRead {
+  id: number;
+  asset_id: number;
+  employer?: string | null;
+  security_id: number;
+  grant_date: string;
+  grant_value_type: string;
+  grant_value: number;
+  grant_fmv_at_grant: number;
+  shares_granted: number;
+  tax_withholding_rate: number;
+  vesting_tranches: RSUVestingTrancheRead[];
+}
+
+// RSU Grant Forecast types
+export interface RSUGrantForecastCreate {
+  security_id: number;
+  first_grant_date: string; // ISO date string
+  grant_frequency?: string; // "annual", "quarterly", etc.
+  grant_value: number;
+  tax_withholding_rate?: number;
+  vesting_schedule_years?: number; // Default 4
+  vesting_cliff_years?: number; // Default 1.0
+  vesting_frequency?: string; // "quarterly", "annual", etc.
+}
+
+export interface RSUGrantForecastRead extends RSUGrantForecastCreate {
+  id: number;
+  scenario_id: number;
+}
+
+// RSU Grant Details Response (from /api/assets/{id}/rsu_details)
+export interface RSUGrantDetailsResponse {
+  grant: {
+    id: number;
+    employer?: string | null;
+    security: {
+      id: number | null;
+      symbol: string | null;
+      name: string | null;
+      assumed_appreciation_rate: number;
+    };
+    grant_date: string;
+    grant_value: number;
+    grant_fmv_at_grant: number;
+    shares_granted: number;
+    estimated_share_withholding_rate: number; // Used only to estimate net shares delivered at vesting
+  };
+  vesting_schedule: Array<{
+    id: number;
+    vesting_date: string;
+    percentage_of_grant: number;
+    shares_vesting: number;
+  }>;
+  unvested: {
+    shares: number;
+    percentage: number;
+    estimated_value: number;
+  };
+  vested_lots: Array<{
+    id: number;
+    asset_id: number;
+    vesting_date?: string | null;
+    shares_held: number;
+    basis_per_share: number;
+    basis_total: number;
+    current_price: number;
+    current_value: number;
+    unrealized_gain: number;
+  }>;
+}
+
 export interface Asset {
   id: number;
   scenario_id: number;
@@ -126,6 +240,7 @@ export interface Asset {
   real_estate_details?: RealEstateDetailsRead;
   general_equity_details?: GeneralEquityDetailsRead;
   specific_stock_details?: SpecificStockDetailsRead;
+  rsu_grant_details?: RSUGrantDetailsRead;
 }
 
 export interface AssetCreate {
@@ -134,6 +249,7 @@ export interface AssetCreate {
   real_estate_details?: RealEstateDetailsCreate;
   general_equity_details?: GeneralEquityDetailsCreate;
   specific_stock_details?: SpecificStockDetailsCreate;
+  rsu_grant_details?: RSUGrantDetailsCreate;
 }
 
 export interface SimpleBondSimulationResult {

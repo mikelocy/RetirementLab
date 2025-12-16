@@ -19,6 +19,7 @@ const ScenarioList: React.FC = () => {
     name: '',
     description: '',
     current_age: 30,
+    base_year: new Date().getFullYear(),
     retirement_age: 65,
     end_age: 95,
     inflation_rate: 0.03,
@@ -128,6 +129,9 @@ const ScenarioList: React.FC = () => {
             </Grid>
             <Grid item xs={4}>
               <TextField fullWidth type="number" label="Current Age" name="current_age" value={newScenario.current_age} onChange={handleChange} />
+            </Grid>
+            <Grid item xs={4}>
+              <TextField fullWidth type="number" label="Base Year" name="base_year" value={newScenario.base_year || new Date().getFullYear()} onChange={handleChange} helperText="Calendar year for current age" />
             </Grid>
             <Grid item xs={4}>
               <TextField fullWidth type="number" label="Retirement Age" name="retirement_age" value={newScenario.retirement_age} onChange={handleChange} />

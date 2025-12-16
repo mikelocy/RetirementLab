@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel
 from sqlmodel import SQLModel
@@ -10,6 +10,7 @@ class ScenarioBase(BaseModel):
     name: str
     description: Optional[str] = None
     current_age: int
+    base_year: Optional[int] = None  # Calendar year corresponding to current_age
     retirement_age: int
     end_age: int
     inflation_rate: float
@@ -97,6 +98,8 @@ class SpecificStockDetailsBase(SQLModel):
     dividend_yield: float = 0.0
     tax_wrapper: TaxWrapper = TaxWrapper.TAXABLE
     cost_basis: float = 0.0
+    source_type: str = "user_entered"
+    source_rsu_grant_id: Optional[int] = None
 
 class SpecificStockDetailsCreate(SpecificStockDetailsBase):
     pass
@@ -110,12 +113,81 @@ class AssetBase(BaseModel):
     type: str
     current_balance: float
 
+# Security/Ticker schemas
+class SecurityBase(SQLModel):
+    symbol: str
+    name: Optional[str] = None
+    assumed_appreciation_rate: float = 0.0  # Expected annual return (e.g., 0.07 = 7%)
+
+class SecurityCreate(SecurityBase):
+    pass
+
+class SecurityRead(SecurityBase):
+    id: int
+
+# RSU Grant schemas
+class RSUVestingTrancheBase(SQLModel):
+    vesting_date: datetime
+    percentage_of_grant: float  # 0-1
+
+class RSUVestingTrancheCreate(RSUVestingTrancheBase):
+    pass
+
+class RSUVestingTrancheRead(RSUVestingTrancheBase):
+    id: int
+    grant_id: int
+
+class RSUGrantDetailsBase(SQLModel):
+    employer: Optional[str] = None
+    security_id: int
+    grant_date: datetime
+    grant_value_type: str = "dollar_value"
+    grant_value: float
+    grant_fmv_at_grant: float
+    shares_granted: float
+    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
+
+class RSUGrantDetailsCreate(SQLModel):
+    employer: Optional[str] = None
+    security_id: int
+    grant_date: datetime
+    grant_value_type: str = "dollar_value"
+    grant_value: float
+    grant_fmv_at_grant: float
+    shares_granted: Optional[float] = None  # Optional - will be calculated if not provided
+    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
+    vesting_tranches: List[RSUVestingTrancheCreate] = []
+
+class RSUGrantDetailsRead(RSUGrantDetailsBase):
+    id: int
+    asset_id: int
+    vesting_tranches: List[RSUVestingTrancheRead] = []
+
+# RSU Grant Forecast schemas
+class RSUGrantForecastBase(SQLModel):
+    security_id: int
+    first_grant_date: datetime
+    grant_frequency: str = "annual"
+    grant_value: float
+    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
+    vesting_schedule_years: int = 4
+    vesting_cliff_years: float = 1.0
+    vesting_frequency: str = "quarterly"
+
+class RSUGrantForecastCreate(RSUGrantForecastBase):
+    pass
+
+class RSUGrantForecastRead(RSUGrantForecastBase):
+    id: int
+    scenario_id: int
+
 class AssetCreate(SQLModel):
     name: str
-    type: str  # "real_estate", "general_equity", or "specific_stock"
+    type: str  # "real_estate", "general_equity", "specific_stock", or "rsu_grant"
     real_estate_details: Optional[RealEstateDetailsCreate] = None
     general_equity_details: Optional[GeneralEquityDetailsCreate] = None
     specific_stock_details: Optional[SpecificStockDetailsCreate] = None
+    rsu_grant_details: Optional[RSUGrantDetailsCreate] = None
 
 class AssetRead(AssetBase):
     id: int
@@ -123,3 +195,4 @@ class AssetRead(AssetBase):
     real_estate_details: Optional[RealEstateDetailsRead] = None
     general_equity_details: Optional[GeneralEquityDetailsRead] = None
     specific_stock_details: Optional[SpecificStockDetailsRead] = None
+    rsu_grant_details: Optional[RSUGrantDetailsRead] = None

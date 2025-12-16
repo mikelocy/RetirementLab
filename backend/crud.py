@@ -1,5 +1,7 @@
+from typing import Optional
 from sqlmodel import Session, select, delete
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType
+from sqlalchemy.orm import Query
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, Security, RSUGrantDetails, RSUVestingTranche, RSUGrantForecast
 from .schemas import ScenarioCreate, AssetCreate, RealEstateDetailsCreate, GeneralEquityDetailsCreate, SpecificStockDetailsCreate, IncomeSourceCreate
 from datetime import datetime
 
@@ -34,6 +36,9 @@ def get_scenario(session: Session, scenario_id: int):
 
 def create_scenario(session: Session, scenario_create: ScenarioCreate):
     db_scenario = Scenario.from_orm(scenario_create)
+    # If base_year is not provided, default to current year
+    if db_scenario.base_year is None:
+        db_scenario.base_year = datetime.utcnow().year
     db_scenario.created_at = datetime.utcnow()
     db_scenario.updated_at = datetime.utcnow()
     session.add(db_scenario)
@@ -125,7 +130,12 @@ def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCrea
             )
             session.add(re_details)
         elif asset_type == "general_equity" and asset_data.general_equity_details:
-            ge_data = asset_data.general_equity_details.dict()
+            # Use model_dump() for Pydantic v2, fallback to dict() for v1
+            try:
+                ge_data = asset_data.general_equity_details.model_dump(exclude_unset=False)
+            except AttributeError:
+                ge_data = asset_data.general_equity_details.dict(exclude_unset=False)
+            
             # Infer tax_wrapper from account_type if not explicitly set or still at default
             # This handles cases where frontend only sends account_type (e.g., "roth", "ira")
             if "tax_wrapper" not in ge_data:
@@ -150,6 +160,36 @@ def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCrea
                 **asset_data.specific_stock_details.dict()
             )
             session.add(stock_details)
+        elif asset_type == "rsu_grant" and asset_data.rsu_grant_details:
+            rsu_data = asset_data.rsu_grant_details.dict(exclude_unset=False)
+            vesting_tranches_data = rsu_data.pop("vesting_tranches", [])
+            
+            # Validate vesting tranches sum to 100%
+            total_percentage = sum(t.get("percentage_of_grant", 0) for t in vesting_tranches_data)
+            if abs(total_percentage - 1.0) > 0.001:
+                raise ValueError(f"Vesting tranches must sum to 100%, got {total_percentage * 100}%")
+            
+            # Calculate shares_granted if not provided
+            if "shares_granted" not in rsu_data or rsu_data["shares_granted"] == 0:
+                if rsu_data.get("grant_fmv_at_grant", 0) > 0:
+                    rsu_data["shares_granted"] = rsu_data["grant_value"] / rsu_data["grant_fmv_at_grant"]
+                else:
+                    raise ValueError("grant_fmv_at_grant must be provided to calculate shares_granted")
+            
+            rsu_grant = RSUGrantDetails(
+                asset_id=asset.id,
+                **rsu_data
+            )
+            session.add(rsu_grant)
+            session.flush()  # Ensure rsu_grant.id is populated
+            
+            # Create vesting tranches
+            for tranche_data in vesting_tranches_data:
+                tranche = RSUVestingTranche(
+                    grant_id=rsu_grant.id,
+                    **tranche_data
+                )
+                session.add(tranche)
 
         session.commit()
         session.refresh(asset)
@@ -250,6 +290,74 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
             session.delete(db_asset.real_estate_details)
         if db_asset.general_equity_details:
             session.delete(db_asset.general_equity_details)
+        if db_asset.rsu_grant_details:
+            session.delete(db_asset.rsu_grant_details)
+
+    elif db_asset.type == "rsu_grant":
+        if not asset_data.rsu_grant_details:
+            return None
+        
+        # For RSU grants, update balance based on current unvested value
+        db_asset.current_balance = asset_data.rsu_grant_details.grant_value
+        
+        rsu_data = asset_data.rsu_grant_details.dict(exclude_unset=False)
+        vesting_tranches_data = rsu_data.pop("vesting_tranches", [])
+        
+        # Validate vesting tranches sum to 100%
+        total_percentage = sum(t.get("percentage_of_grant", 0) for t in vesting_tranches_data)
+        if abs(total_percentage - 1.0) > 0.001:
+            raise ValueError(f"Vesting tranches must sum to 100%, got {total_percentage * 100}%")
+        
+        # Calculate shares_granted if not provided
+        if "shares_granted" not in rsu_data or rsu_data["shares_granted"] == 0:
+            if rsu_data.get("grant_fmv_at_grant", 0) > 0:
+                rsu_data["shares_granted"] = rsu_data["grant_value"] / rsu_data["grant_fmv_at_grant"]
+            else:
+                raise ValueError("grant_fmv_at_grant must be provided to calculate shares_granted")
+        
+        if db_asset.rsu_grant_details:
+            # Update existing grant
+            for key, value in rsu_data.items():
+                setattr(db_asset.rsu_grant_details, key, value)
+            session.add(db_asset.rsu_grant_details)
+            
+            # Delete existing tranches and recreate
+            existing_tranches = session.exec(
+                select(RSUVestingTranche).where(RSUVestingTranche.grant_id == db_asset.rsu_grant_details.id)
+            ).all()
+            for tranche in existing_tranches:
+                session.delete(tranche)
+            
+            # Create new tranches
+            for tranche_data in vesting_tranches_data:
+                tranche = RSUVestingTranche(
+                    grant_id=db_asset.rsu_grant_details.id,
+                    **tranche_data
+                )
+                session.add(tranche)
+        else:
+            # Create new grant details
+            rsu_grant = RSUGrantDetails(
+                asset_id=db_asset.id,
+                **rsu_data
+            )
+            session.add(rsu_grant)
+            session.flush()
+            
+            for tranche_data in vesting_tranches_data:
+                tranche = RSUVestingTranche(
+                    grant_id=rsu_grant.id,
+                    **tranche_data
+                )
+                session.add(tranche)
+        
+        # Remove other type details if they exist
+        if db_asset.real_estate_details:
+            session.delete(db_asset.real_estate_details)
+        if db_asset.general_equity_details:
+            session.delete(db_asset.general_equity_details)
+        if db_asset.specific_stock_details:
+            session.delete(db_asset.specific_stock_details)
             
     session.add(db_asset)
     session.commit()
@@ -259,6 +367,14 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
 def delete_asset(session: Session, asset_id: int, commit: bool = True):
     # Direct delete without object loading
     try:
+        # First, delete vesting tranches if this is an RSU grant
+        rsu_grant = session.exec(
+            select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset_id)
+        ).first()
+        if rsu_grant:
+            session.exec(delete(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id))
+            session.exec(delete(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset_id))
+        
         session.exec(delete(RealEstateDetails).where(RealEstateDetails.asset_id == asset_id))
         session.exec(delete(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset_id))
         session.exec(delete(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset_id))
@@ -277,7 +393,54 @@ def create_asset(session: Session, asset_create: AssetCreate, scenario_id: int):
 
 def get_assets_for_scenario(session: Session, scenario_id: int):
     statement = select(Asset).where(Asset.scenario_id == scenario_id)
-    return session.exec(statement).all()
+    assets = session.exec(statement).all()
+    
+    # Eagerly load detail relationships to avoid lazy loading issues during serialization
+    for asset in assets:
+        if asset.type == "real_estate":
+            _ = session.exec(select(RealEstateDetails).where(RealEstateDetails.asset_id == asset.id)).first()
+        elif asset.type == "general_equity":
+            _ = session.exec(select(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset.id)).first()
+        elif asset.type == "specific_stock":
+            _ = session.exec(select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)).first()
+        elif asset.type == "rsu_grant":
+            rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset.id)).first()
+            if rsu_grant:
+                # Also load vesting tranches
+                _ = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)).all()
+    
+    return assets
+
+# Security CRUD helpers
+def get_or_create_security(session: Session, symbol: str, name: Optional[str] = None, assumed_appreciation_rate: Optional[float] = None) -> Security:
+    """Get existing security by symbol, or create if it doesn't exist. Updates appreciation rate if provided."""
+    existing = session.exec(select(Security).where(Security.symbol == symbol)).first()
+    if existing:
+        # Update appreciation rate if provided
+        if assumed_appreciation_rate is not None:
+            existing.assumed_appreciation_rate = assumed_appreciation_rate
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+        return existing
+    
+    security = Security(
+        symbol=symbol, 
+        name=name,
+        assumed_appreciation_rate=assumed_appreciation_rate if assumed_appreciation_rate is not None else 0.0
+    )
+    session.add(security)
+    session.commit()
+    session.refresh(security)
+    return security
+
+def get_security(session: Session, security_id: int) -> Optional[Security]:
+    """Get security by ID."""
+    return session.get(Security, security_id)
+
+def get_security_by_symbol(session: Session, symbol: str) -> Optional[Security]:
+    """Get security by symbol."""
+    return session.exec(select(Security).where(Security.symbol == symbol)).first()
 
 def create_income_source(session: Session, income_source: IncomeSourceCreate, scenario_id: int):
     source_data = income_source.dict()

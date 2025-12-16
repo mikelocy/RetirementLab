@@ -23,6 +23,7 @@ class Scenario(SQLModel, table=True):
     name: str
     description: Optional[str] = None
     current_age: int
+    base_year: Optional[int] = Field(default=None)  # Calendar year corresponding to current_age (e.g., if current_age=50 and base_year=2024, then age 51 = 2025)
     retirement_age: int
     end_age: int
     inflation_rate: float
@@ -35,6 +36,7 @@ class Scenario(SQLModel, table=True):
 
     assets: List["Asset"] = Relationship(back_populates="scenario")
     income_sources: List["IncomeSource"] = Relationship(back_populates="scenario")
+    rsu_grant_forecasts: List["RSUGrantForecast"] = Relationship(back_populates="scenario")
 
 class IncomeSource(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -61,6 +63,7 @@ class Asset(SQLModel, table=True):
     real_estate_details: Optional["RealEstateDetails"] = Relationship(back_populates="asset")
     general_equity_details: Optional["GeneralEquityDetails"] = Relationship(back_populates="asset")
     specific_stock_details: Optional["SpecificStockDetails"] = Relationship(back_populates="asset")
+    rsu_grant_details: Optional["RSUGrantDetails"] = Relationship(back_populates="asset")
 
 class DepreciationMethod(str, Enum):
     NONE = "none"  # Primary residence, land, etc.
@@ -129,4 +132,65 @@ class SpecificStockDetails(SQLModel, table=True):
     tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
     cost_basis: float = 0.0  # For taxable accounts
     
+    # RSU tracking fields
+    source_type: str = "user_entered"  # "user_entered" or "rsu_vest"
+    source_rsu_grant_id: Optional[int] = None  # FK to RSUGrantDetails if from RSU vesting
+    
     asset: Optional[Asset] = Relationship(back_populates="specific_stock_details")
+
+# Centralized Security/Ticker model for shared stock price/appreciation assumptions
+class Security(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(unique=True)  # e.g., "KLAC"
+    name: Optional[str] = None  # e.g., "KLA Corporation"
+    assumed_appreciation_rate: float = 0.0  # Expected annual return (e.g., 0.07 = 7%)
+    # This rate is used for RSU grants and can be overridden by SpecificStockDetails if the stock is held directly
+    
+# RSU Grant Details (unvested layer)
+class RSUGrantDetails(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id")
+    
+    employer: Optional[str] = None
+    security_id: int = Field(foreign_key="security.id")
+    grant_date: datetime
+    grant_value_type: str = "dollar_value"  # For now, only support dollar-based grants
+    grant_value: float  # Total dollar value at grant
+    grant_fmv_at_grant: float  # Fair market value per share at grant date
+    shares_granted: float  # Computed: grant_value / grant_fmv_at_grant
+    
+    # Share withholding (mechanical only - affects net shares delivered, not taxable income)
+    estimated_share_withholding_rate: float = 0.37  # Default 37% - used only to estimate net shares delivered at vesting
+    
+    asset: Optional[Asset] = Relationship(back_populates="rsu_grant_details")
+    security: Optional["Security"] = Relationship()
+    vesting_tranches: List["RSUVestingTranche"] = Relationship(back_populates="grant")
+
+# RSU Vesting Tranche (user-defined vesting schedule)
+class RSUVestingTranche(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    grant_id: int = Field(foreign_key="rsugrantdetails.id")
+    vesting_date: datetime
+    percentage_of_grant: float  # 0-1, e.g., 0.25 for 25%
+    
+    grant: Optional[RSUGrantDetails] = Relationship(back_populates="vesting_tranches")
+
+# RSU Grant Forecast (for future grants)
+class RSUGrantForecast(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scenario_id: int = Field(foreign_key="scenario.id")
+    
+    security_id: int = Field(foreign_key="security.id")
+    first_grant_date: datetime
+    grant_frequency: str = "annual"  # "annual", "quarterly", etc.
+    grant_value: float  # Dollar amount per grant
+    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting
+    
+    # Vesting template - store as JSON or reference to a pattern
+    # For v1, we'll store a simple structure that can be copied to new grants
+    vesting_schedule_years: int = 4  # Default 4-year vest
+    vesting_cliff_years: float = 1.0  # Years until first vest (cliff)
+    vesting_frequency: str = "quarterly"  # After cliff: "quarterly", "annual", etc.
+    
+    scenario: Optional[Scenario] = Relationship()
+    security: Optional["Security"] = Relationship()

@@ -7,9 +7,11 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { NumericFormat } from 'react-number-format';
-import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource } from '../api/client';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType } from '../types';
+import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails } from '../api/client';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
 
@@ -86,6 +88,18 @@ interface AssetFormProps {
   stockAppreciation: number | ""; setStockAppreciation: (v: number | "") => void;
   stockDividend: number | ""; setStockDividend: (v: number | "") => void;
   stockCostBasis: number | ""; setStockCostBasis: (v: number | "") => void;
+  
+  // RSU Grant Props
+  rsuEmployer: string; setRsuEmployer: (v: string) => void;
+  rsuTicker: string; setRsuTicker: (v: string) => void;
+  rsuSecurityId: number | null; setRsuSecurityId: (v: number | null) => void;
+  rsuAppreciationRate: number | ""; setRsuAppreciationRate: (v: number | "") => void;
+  rsuGrantDate: string; setRsuGrantDate: (v: string) => void;
+  rsuGrantValue: number | ""; setRsuGrantValue: (v: number | "") => void;
+  rsuGrantFmv: number | ""; setRsuGrantFmv: (v: number | "") => void;
+  rsuTaxWithholdingRate: number | ""; setRsuTaxWithholdingRate: (v: number | "") => void;
+  rsuVestingTranches: Array<{ vesting_date: string; percentage_of_grant: number }>; setRsuVestingTranches: (v: Array<{ vesting_date: string; percentage_of_grant: number }>) => void;
+  editingAssetId: number | null;
 }
 
 const AssetForm: React.FC<AssetFormProps> = ({
@@ -117,7 +131,17 @@ const AssetForm: React.FC<AssetFormProps> = ({
   stockPrice, setStockPrice,
   stockAppreciation, setStockAppreciation,
   stockDividend, setStockDividend,
-  stockCostBasis, setStockCostBasis
+  stockCostBasis, setStockCostBasis,
+  rsuEmployer, setRsuEmployer,
+  rsuTicker, setRsuTicker,
+  rsuSecurityId, setRsuSecurityId,
+  rsuAppreciationRate, setRsuAppreciationRate,
+  rsuGrantDate, setRsuGrantDate,
+  rsuGrantValue, setRsuGrantValue,
+  rsuGrantFmv, setRsuGrantFmv,
+  rsuTaxWithholdingRate, setRsuTaxWithholdingRate,
+  rsuVestingTranches, setRsuVestingTranches,
+  editingAssetId
 }) => (
     <Grid container spacing={2} alignItems="flex-start" sx={{ width: '100%', maxWidth: '100%' }}>
       <Grid item xs={12} sm={6}>
@@ -140,6 +164,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             <MenuItem value="general_equity">General Equity</MenuItem>
             <MenuItem value="real_estate">Real Estate</MenuItem>
             <MenuItem value="specific_stock">Specific Stock</MenuItem>
+            <MenuItem value="rsu_grant">RSU – Restricted Stock Unit</MenuItem>
           </Select>
         </FormControl>
       </Grid>
@@ -375,7 +400,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             </Grid>
           )}
         </>
-      ) : (
+      ) : newAssetType === 'specific_stock' ? (
         // Specific Stock Form
         <>
           <Grid item xs={6}>
@@ -425,7 +450,233 @@ const AssetForm: React.FC<AssetFormProps> = ({
           </Grid>
           {/* Future: Dividends */}
         </>
-      )}
+      ) : newAssetType === 'rsu_grant' ? (
+        <>
+          <Grid item xs={6}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Employer (optional)"
+              value={rsuEmployer}
+              onChange={(e) => setRsuEmployer(e.target.value)}
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Ticker Symbol *"
+              value={rsuTicker}
+              onChange={async (e) => {
+                const ticker = e.target.value.toUpperCase();
+                setRsuTicker(ticker);
+                if (ticker) {
+                  try {
+                    // Create/get security without appreciation rate initially
+                    // We'll update it when the user sets it or saves the form
+                    const security = await createOrGetSecurity({ 
+                      symbol: ticker
+                    });
+                    setRsuSecurityId(security.id);
+                    // Update appreciation rate if security already existed with a different rate
+                    const existingRate = security.assumed_appreciation_rate ?? 0.07;
+                    let currentRate: number;
+                    if (rsuAppreciationRate === "" || rsuAppreciationRate === null || rsuAppreciationRate === undefined) {
+                      currentRate = 0.07;
+                    } else {
+                      const numValue = Number(rsuAppreciationRate);
+                      currentRate = isNaN(numValue) ? 0.07 : numValue; // Allow 0, only default if NaN
+                    }
+                    if (existingRate !== currentRate) {
+                      setRsuAppreciationRate(existingRate);
+                    }
+                  } catch (error: any) {
+                    console.error("Error creating/getting security", error);
+                    if (error.response?.data?.detail) {
+                      console.error("Validation error details:", error.response.data.detail);
+                    }
+                  }
+                }
+              }}
+              required
+              helperText="Will create security if it doesn't exist"
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField
+              fullWidth
+              size="small"
+              type="number"
+              label="Expected Return (0.07 = 7%)"
+              value={rsuAppreciationRate === "" ? "" : (rsuAppreciationRate !== null && rsuAppreciationRate !== undefined ? rsuAppreciationRate : 0.07)}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "") {
+                  setRsuAppreciationRate("");
+                } else {
+                  const num = parseFloat(val);
+                  setRsuAppreciationRate(isNaN(num) ? "" : num); // Allow 0, only set to "" if NaN
+                }
+              }}
+              inputProps={{ min: 0, max: 1, step: 0.01 }}
+              helperText="Used for RSU appreciation if stock not held directly"
+              onBlur={async () => {
+                // Update security with new appreciation rate if it exists
+                if (rsuSecurityId && rsuTicker) {
+                  try {
+                    let rate: number;
+                    if (rsuAppreciationRate === "" || rsuAppreciationRate === null || rsuAppreciationRate === undefined) {
+                      rate = 0.07; // Default only if not set
+                    } else {
+                      const numValue = Number(rsuAppreciationRate);
+                      rate = isNaN(numValue) ? 0.07 : numValue; // Allow 0, only default if NaN
+                    }
+                    await createOrGetSecurity({ 
+                      symbol: rsuTicker,
+                      assumed_appreciation_rate: rate
+                    });
+                  } catch (error) {
+                    console.error("Error updating security appreciation rate", error);
+                  }
+                }
+              }}
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField
+              fullWidth
+              size="small"
+              type="date"
+              label="Grant Date *"
+              value={rsuGrantDate}
+              onChange={(e) => setRsuGrantDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              required
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput
+              label="Grant Value (Total $) *"
+              value={rsuGrantValue}
+              onChange={setRsuGrantValue}
+              required
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <CurrencyInput
+              label="FMV per Share at Grant *"
+              value={rsuGrantFmv}
+              onChange={setRsuGrantFmv}
+              required
+              helperText="Fair market value per share on grant date"
+            />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField
+              fullWidth
+              size="small"
+              type="number"
+              label="Estimated Share Withholding Rate (0.37)"
+              value={rsuTaxWithholdingRate}
+              onChange={(e) => setRsuTaxWithholdingRate(e.target.value === "" ? "" : parseFloat(e.target.value))}
+              inputProps={{ min: 0, max: 1, step: 0.01 }}
+              helperText="Used only to estimate net shares delivered at vesting (shares withheld). Actual taxes are calculated globally. Default 37% (0.37)"
+            />
+          </Grid>
+          
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }}>Vesting Schedule</Divider>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              Add vesting tranches. Total must equal 100%.
+            </Typography>
+            {rsuVestingTranches.map((tranche, index) => {
+              const vestDate = tranche.vesting_date ? new Date(tranche.vesting_date) : null;
+              const isPast = vestDate && vestDate <= new Date();
+              const isLocked = isPast && editingAssetId !== null; // Only lock if editing existing grant
+              
+              return (
+                <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
+                  <Grid item xs={5}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="date"
+                      label="Vesting Date"
+                      value={tranche.vesting_date}
+                      onChange={(e) => {
+                        if (isLocked) {
+                          alert("Cannot modify vesting date for tranches that have already vested. Please delete and recreate the grant if needed.");
+                          return;
+                        }
+                        const updated = [...rsuVestingTranches];
+                        updated[index].vesting_date = e.target.value;
+                        setRsuVestingTranches(updated);
+                      }}
+                      InputLabelProps={{ shrink: true }}
+                      disabled={isLocked}
+                      helperText={isLocked ? "Already vested - cannot edit" : ""}
+                      error={isLocked}
+                    />
+                  </Grid>
+                  <Grid item xs={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="number"
+                      label="Percentage (0-1)"
+                      value={tranche.percentage_of_grant}
+                      onChange={(e) => {
+                        if (isLocked) {
+                          alert("Cannot modify percentage for tranches that have already vested. Please delete and recreate the grant if needed.");
+                          return;
+                        }
+                        const updated = [...rsuVestingTranches];
+                        updated[index].percentage_of_grant = parseFloat(e.target.value) || 0;
+                        setRsuVestingTranches(updated);
+                      }}
+                      inputProps={{ min: 0, max: 1, step: 0.01 }}
+                      disabled={isLocked}
+                      error={isLocked}
+                    />
+                  </Grid>
+                  <Grid item xs={3}>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                      onClick={() => {
+                        if (isLocked) {
+                          alert("Cannot remove tranches that have already vested. Please delete and recreate the grant if needed.");
+                          return;
+                        }
+                        const updated = rsuVestingTranches.filter((_, i) => i !== index);
+                        setRsuVestingTranches(updated);
+                      }}
+                      disabled={isLocked}
+                    >
+                      Remove
+                    </Button>
+                  </Grid>
+                </Grid>
+              );
+            })}
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setRsuVestingTranches([...rsuVestingTranches, { vesting_date: "", percentage_of_grant: 0 }]);
+              }}
+              sx={{ mt: 1 }}
+            >
+              Add Vesting Tranche
+            </Button>
+            <Typography variant="caption" color={rsuVestingTranches.reduce((sum, t) => sum + t.percentage_of_grant, 0) === 1 ? "success.main" : "error.main"} sx={{ display: 'block', mt: 1 }}>
+              Total: {(rsuVestingTranches.reduce((sum, t) => sum + t.percentage_of_grant, 0) * 100).toFixed(1)}%
+            </Typography>
+          </Grid>
+        </>
+      ) : null}
     </Grid>
 );
 
@@ -507,6 +758,20 @@ const ScenarioDetail: React.FC = () => {
   const [stockDividend, setStockDividend] = useState<number | "">("");
   const [stockCostBasis, setStockCostBasis] = useState<number | "">("");
 
+  // RSU Grant-specific state
+  const [rsuEmployer, setRsuEmployer] = useState("");
+  const [rsuTicker, setRsuTicker] = useState("");
+  const [rsuSecurityId, setRsuSecurityId] = useState<number | null>(null);
+  const [rsuAppreciationRate, setRsuAppreciationRate] = useState<number | "">(0.07);
+  const [rsuGrantDate, setRsuGrantDate] = useState("");
+  const [rsuGrantValue, setRsuGrantValue] = useState<number | "">("");
+  const [rsuGrantFmv, setRsuGrantFmv] = useState<number | "">("");
+  const [rsuTaxWithholdingRate, setRsuTaxWithholdingRate] = useState<number | "">(0.37);
+  const [rsuVestingTranches, setRsuVestingTranches] = useState<Array<{ vesting_date: string; percentage_of_grant: number }>>([]);
+  const [securities, setSecurities] = useState<Security[]>([]);
+  const [expandedRSUGrants, setExpandedRSUGrants] = useState<Set<number>>(new Set());
+  const [rsuGrantDetailsCache, setRsuGrantDetailsCache] = useState<Map<number, RSUGrantDetailsResponse>>(new Map());
+
   // Asset Edit State
   const [assetEditOpen, setAssetEditOpen] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<number | null>(null);
@@ -541,6 +806,15 @@ const ScenarioDetail: React.FC = () => {
     setStockAppreciation("");
     setStockDividend("");
     setStockCostBasis("");
+    setRsuEmployer("");
+    setRsuTicker("");
+    setRsuSecurityId(null);
+    setRsuAppreciationRate(0.07);
+    setRsuGrantDate("");
+    setRsuGrantValue("");
+    setRsuGrantFmv("");
+    setRsuTaxWithholdingRate(0.37);
+    setRsuVestingTranches([]);
     setEditingAssetId(null);
   };
 
@@ -566,6 +840,7 @@ const ScenarioDetail: React.FC = () => {
         name: s.name,
         description: s.description || '',
         current_age: s.current_age,
+        base_year: s.base_year || new Date().getFullYear(),
         retirement_age: s.retirement_age,
         end_age: s.end_age,
         inflation_rate: s.inflation_rate,
@@ -632,7 +907,7 @@ const ScenarioDetail: React.FC = () => {
           cost_basis: geCostBasis === "" ? (geAccountType === "taxable" ? Number(geAccountBalance) : 0) : Number(geCostBasis),
         },
       };
-    } else {
+    } else if (newAssetType === "specific_stock") {
       if (stockShares === "" || isNaN(Number(stockShares))) return;
       if (stockPrice === "" || isNaN(Number(stockPrice))) return;
 
@@ -648,6 +923,86 @@ const ScenarioDetail: React.FC = () => {
           cost_basis: stockCostBasis === "" ? (Number(stockShares) * Number(stockPrice)) : Number(stockCostBasis),
         }
       };
+    } else if (newAssetType === "rsu_grant") {
+      if (rsuTicker === "" || !rsuSecurityId) return;
+      if (rsuGrantDate === "") return;
+      if (rsuGrantValue === "" || isNaN(Number(rsuGrantValue))) return;
+      if (rsuGrantFmv === "" || isNaN(Number(rsuGrantFmv))) return;
+      
+      // Validate vesting tranches sum to 100%
+      const totalPercentage = rsuVestingTranches.reduce((sum, t) => sum + t.percentage_of_grant, 0);
+      if (Math.abs(totalPercentage - 1.0) > 0.001) {
+        alert(`Vesting tranches must sum to 100%. Current total: ${(totalPercentage * 100).toFixed(1)}%`);
+        return;
+      }
+      
+      // Ensure security exists and update appreciation rate if set
+      if (!rsuSecurityId) {
+        try {
+          const security = await createOrGetSecurity({ symbol: rsuTicker });
+          setRsuSecurityId(security.id);
+        } catch (error) {
+          console.error("Error creating/getting security", error);
+          alert("Error creating/getting security. Please try again.");
+          return;
+        }
+      }
+      
+      // Update security's appreciation rate if it's been set
+      if (rsuSecurityId && rsuTicker && rsuAppreciationRate !== "" && rsuAppreciationRate !== null && rsuAppreciationRate !== undefined) {
+        try {
+          let rate: number;
+          if (typeof rsuAppreciationRate === 'number' && !isNaN(rsuAppreciationRate)) {
+            rate = rsuAppreciationRate; // Allow 0
+          } else {
+            const parsed = parseFloat(String(rsuAppreciationRate));
+            rate = isNaN(parsed) ? 0.07 : parsed; // Allow 0, only default if NaN
+          }
+          await createOrGetSecurity({ 
+            symbol: rsuTicker,
+            assumed_appreciation_rate: rate
+          });
+        } catch (error) {
+          console.error("Error updating security appreciation rate", error);
+          // Don't block form submission if this fails
+        }
+      }
+
+      // Calculate shares_granted
+      const sharesGranted = Number(rsuGrantValue) / Number(rsuGrantFmv);
+      
+      // Convert date strings to ISO datetime format (add time if not present)
+      const formatDateForAPI = (dateStr: string): string => {
+        if (!dateStr) return dateStr;
+        // If it's just a date (YYYY-MM-DD), add time to make it a full datetime
+        if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          return `${dateStr}T00:00:00`;
+        }
+        return dateStr;
+      };
+      
+      payload = {
+        name: newAssetName.trim(),
+        type: "rsu_grant",
+        rsu_grant_details: {
+          employer: rsuEmployer || null,
+          security_id: rsuSecurityId!,
+          grant_date: formatDateForAPI(rsuGrantDate),
+          grant_value_type: "dollar_value",
+          grant_value: Number(rsuGrantValue),
+          grant_fmv_at_grant: Number(rsuGrantFmv),
+          shares_granted: sharesGranted,
+          estimated_share_withholding_rate: rsuTaxWithholdingRate === "" ? 0.37 : Number(rsuTaxWithholdingRate),
+          vesting_tranches: rsuVestingTranches.map(t => ({
+            vesting_date: formatDateForAPI(t.vesting_date),
+            percentage_of_grant: t.percentage_of_grant
+          }))
+        }
+      };
+      
+      console.log("RSU Grant Payload:", JSON.stringify(payload, null, 2));
+    } else {
+      return; // Unknown asset type
     }
 
     try {
@@ -664,9 +1019,21 @@ const ScenarioDetail: React.FC = () => {
 
       // Clear form fields
       resetAssetForm();
+      
+      // Close dialog
+      if (isUpdate) {
+        setAssetEditOpen(false);
+      } else {
+        setAddAssetOpen(false);
+      }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving asset", error);
+      if (error.response?.data?.detail) {
+        alert(`Error: ${error.response.data.detail}`);
+      } else {
+        alert(`Error saving asset: ${error.message || 'Unknown error'}`);
+      }
     }
   };
 
@@ -719,9 +1086,39 @@ const ScenarioDetail: React.FC = () => {
       setStockAppreciation(d.assumed_appreciation_rate || "");
       setStockDividend(d.dividend_yield || "");
       setStockCostBasis((d as any).cost_basis || "");
+    } else if (asset.type === "rsu_grant" && asset.rsu_grant_details) {
+      const d = asset.rsu_grant_details;
+      setRsuEmployer(d.employer || "");
+      setRsuSecurityId(d.security_id);
+      // Need to get security symbol - will load it
+      loadRSUGrantForEdit(asset.id);
+      setRsuGrantDate(d.grant_date ? new Date(d.grant_date).toISOString().split('T')[0] : "");
+      setRsuGrantValue(d.grant_value);
+      setRsuGrantFmv(d.grant_fmv_at_grant);
+      setRsuTaxWithholdingRate(d.estimated_share_withholding_rate || 0.37);
+      setRsuVestingTranches(
+        d.vesting_tranches.map(t => ({
+          vesting_date: t.vesting_date ? new Date(t.vesting_date).toISOString().split('T')[0] : "",
+          percentage_of_grant: t.percentage_of_grant
+        }))
+      );
     }
 
     setAssetEditOpen(true);
+  };
+
+  const loadRSUGrantForEdit = async (assetId: number) => {
+    try {
+      const details = await getRSUGrantDetails(assetId);
+      if (details.grant.security) {
+        setRsuTicker(details.grant.security.symbol || "");
+        // Load appreciation rate from security - ensure it's always a number, never undefined/null
+        const rate = details.grant.security.assumed_appreciation_rate;
+        setRsuAppreciationRate(rate !== undefined && rate !== null ? rate : 0.07);
+      }
+    } catch (error) {
+      console.error("Error loading RSU grant details", error);
+    }
   };
 
   const handleCreateIncomeSource = async () => {
@@ -821,8 +1218,13 @@ const ScenarioDetail: React.FC = () => {
     try {
       const result = await runSimpleBondSimulation(scenarioId);
       setSimulationResult(result);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error running simulation", error);
+      if (error.response?.data?.detail) {
+        alert(`Simulation Error: ${error.response.data.detail}`);
+      } else {
+        alert(`Error running simulation: ${error.message || 'Unknown error'}`);
+      }
     }
   };
 
@@ -874,7 +1276,17 @@ const ScenarioDetail: React.FC = () => {
     stockPrice, setStockPrice,
     stockAppreciation, setStockAppreciation,
     stockDividend, setStockDividend,
-    stockCostBasis, setStockCostBasis
+    stockCostBasis, setStockCostBasis,
+    rsuEmployer, setRsuEmployer,
+    rsuTicker, setRsuTicker,
+    rsuSecurityId, setRsuSecurityId,
+    rsuAppreciationRate, setRsuAppreciationRate,
+    rsuGrantDate, setRsuGrantDate,
+    rsuGrantValue, setRsuGrantValue,
+    rsuGrantFmv, setRsuGrantFmv,
+    rsuTaxWithholdingRate, setRsuTaxWithholdingRate,
+    rsuVestingTranches, setRsuVestingTranches,
+    editingAssetId
   };
 
   // Calculate fixed width for chart and table alignment
@@ -963,28 +1375,119 @@ const ScenarioDetail: React.FC = () => {
                         ? (asset.specific_stock_details as any).cost_basis
                         : null;
                       const showCostBasis = costBasis !== null && costBasis !== undefined && costBasis > 0;
+                      const isRSUGrant = asset.type === 'rsu_grant';
+                      const isExpanded = expandedRSUGrants.has(asset.id);
+                      const rsuDetails = rsuGrantDetailsCache.get(asset.id);
                       
                       return (
-                      <TableRow key={asset.id}>
-                        <TableCell>{asset.name}</TableCell>
-                        <TableCell>
-                          {asset.type === 'real_estate' ? 'Real Estate' : 
-                           asset.type === 'general_equity' ? 'General Equity' : 
-                           asset.type === 'specific_stock' ? 'Specific Stock' : asset.type}
-                        </TableCell>
-                        <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
-                        <TableCell align="right">
-                          {showCostBasis ? formatCurrency(costBasis) : '-'}
-                        </TableCell>
-                        <TableCell align="right">
-                          <IconButton size="small" onClick={() => handleEditAssetClick(asset)}>
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                          <IconButton size="small" onClick={() => handleDeleteAsset(asset.id)}>
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
+                        <React.Fragment key={asset.id}>
+                          <TableRow>
+                            <TableCell>
+                              {isRSUGrant && (
+                                <IconButton
+                                  size="small"
+                                  onClick={async () => {
+                                    if (!isExpanded) {
+                                      try {
+                                        const details = await getRSUGrantDetails(asset.id);
+                                        setRsuGrantDetailsCache(prev => new Map(prev).set(asset.id, details));
+                                        setExpandedRSUGrants(prev => new Set(prev).add(asset.id));
+                                      } catch (error) {
+                                        console.error("Error loading RSU details", error);
+                                      }
+                                    } else {
+                                      setExpandedRSUGrants(prev => {
+                                        const next = new Set(prev);
+                                        next.delete(asset.id);
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  sx={{ mr: 1, p: 0.5 }}
+                                >
+                                  {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                                </IconButton>
+                              )}
+                              {asset.name}
+                            </TableCell>
+                            <TableCell>
+                              {asset.type === 'real_estate' ? 'Real Estate' : 
+                               asset.type === 'general_equity' ? 'General Equity' : 
+                               asset.type === 'specific_stock' ? 'Specific Stock' : 
+                               asset.type === 'rsu_grant' ? 'RSU Grant' : asset.type}
+                            </TableCell>
+                            <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
+                            <TableCell align="right">
+                              {showCostBasis ? formatCurrency(costBasis) : '-'}
+                            </TableCell>
+                            <TableCell align="right">
+                              <IconButton size="small" onClick={() => handleEditAssetClick(asset)}>
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton size="small" onClick={() => handleDeleteAsset(asset.id)}>
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
+                          {isRSUGrant && isExpanded && rsuDetails && (
+                            <TableRow>
+                              <TableCell colSpan={5} sx={{ py: 2, backgroundColor: 'grey.50' }}>
+                                <Typography variant="subtitle2" gutterBottom>Grant Details</Typography>
+                                <Grid container spacing={2} sx={{ mb: 2 }}>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">Employer</Typography><Typography variant="body2">{rsuDetails.grant.employer || 'N/A'}</Typography></Grid>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">Security</Typography><Typography variant="body2">{rsuDetails.grant.security.symbol} - {rsuDetails.grant.security.name || 'N/A'}</Typography></Grid>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">Grant Date</Typography><Typography variant="body2">{new Date(rsuDetails.grant.grant_date).toLocaleDateString()}</Typography></Grid>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">Grant Value</Typography><Typography variant="body2">{formatCurrency(rsuDetails.grant.grant_value)}</Typography></Grid>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">Shares Granted</Typography><Typography variant="body2">{rsuDetails.grant.shares_granted.toFixed(4)}</Typography></Grid>
+                                  <Grid item xs={6}><Typography variant="caption" color="text.secondary">FMV at Grant</Typography><Typography variant="body2">{formatCurrency(rsuDetails.grant.grant_fmv_at_grant)}</Typography></Grid>
+                                </Grid>
+                                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>Unvested</Typography>
+                                <Grid container spacing={2} sx={{ mb: 2 }}>
+                                  <Grid item xs={4}><Typography variant="caption" color="text.secondary">Shares</Typography><Typography variant="body2">{rsuDetails.unvested.shares.toFixed(4)}</Typography></Grid>
+                                  <Grid item xs={4}><Typography variant="caption" color="text.secondary">Percentage</Typography><Typography variant="body2">{(rsuDetails.unvested.percentage * 100).toFixed(1)}%</Typography></Grid>
+                                  <Grid item xs={4}><Typography variant="caption" color="text.secondary">Estimated Value</Typography><Typography variant="body2">{formatCurrency(rsuDetails.unvested.estimated_value)}</Typography></Grid>
+                                </Grid>
+                                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>Vesting Schedule</Typography>
+                                <Table size="small" sx={{ mb: 2 }}>
+                                  <TableHead><TableRow><TableCell>Vesting Date</TableCell><TableCell align="right">Percentage</TableCell><TableCell align="right">Shares</TableCell></TableRow></TableHead>
+                                  <TableBody>
+                                    {rsuDetails.vesting_schedule.map((tranche) => {
+                                      const vestDate = new Date(tranche.vesting_date);
+                                      const isPast = vestDate <= new Date();
+                                      return (
+                                        <TableRow key={tranche.id} sx={{ backgroundColor: isPast ? 'success.light' : 'inherit' }}>
+                                          <TableCell>{vestDate.toLocaleDateString()}{isPast && <Typography variant="caption" color="success.main" sx={{ ml: 1 }}>(Vested)</Typography>}</TableCell>
+                                          <TableCell align="right">{(tranche.percentage_of_grant * 100).toFixed(1)}%</TableCell>
+                                          <TableCell align="right">{tranche.shares_vesting.toFixed(4)}</TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                  </TableBody>
+                                </Table>
+                                {rsuDetails.vested_lots.length > 0 && (
+                                  <>
+                                    <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>Vested Lots</Typography>
+                                    <Table size="small">
+                                      <TableHead><TableRow><TableCell>Vesting Date</TableCell><TableCell align="right">Shares</TableCell><TableCell align="right">Basis/Share</TableCell><TableCell align="right">Current Price</TableCell><TableCell align="right">Current Value</TableCell><TableCell align="right">Unrealized Gain</TableCell></TableRow></TableHead>
+                                      <TableBody>
+                                        {rsuDetails.vested_lots.map((lot) => (
+                                          <TableRow key={lot.id}>
+                                            <TableCell>{lot.vesting_date ? new Date(lot.vesting_date).toLocaleDateString() : 'N/A'}</TableCell>
+                                            <TableCell align="right">{lot.shares_held.toFixed(4)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(lot.basis_per_share)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(lot.current_price)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(lot.current_value)}</TableCell>
+                                            <TableCell align="right" sx={{ color: lot.unrealized_gain >= 0 ? 'success.main' : 'error.main' }}>{formatCurrency(lot.unrealized_gain)}</TableCell>
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  </>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                     {assets.length === 0 && (
@@ -1105,6 +1608,9 @@ const ScenarioDetail: React.FC = () => {
             </Grid>
             <Grid item xs={4}>
               <TextField fullWidth type="number" label="Current Age" name="current_age" value={editScenario.current_age} onChange={handleEditChange} />
+            </Grid>
+            <Grid item xs={4}>
+              <TextField fullWidth type="number" label="Base Year" name="base_year" value={editScenario.base_year || new Date().getFullYear()} onChange={handleEditChange} helperText="Calendar year corresponding to current age" />
             </Grid>
             <Grid item xs={4}>
               <TextField fullWidth type="number" label="Retirement Age" name="retirement_age" value={editScenario.retirement_age} onChange={handleEditChange} />

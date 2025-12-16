@@ -1,5 +1,8 @@
 import axios from 'axios';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult, IncomeSource, IncomeSourceCreate } from '../types';
+import { 
+  Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult, IncomeSource, IncomeSourceCreate,
+  Security, SecurityCreate, RSUGrantForecastCreate, RSUGrantForecastRead, RSUGrantDetailsResponse
+} from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -70,4 +73,51 @@ export const updateIncomeSource = async (id: number, payload: IncomeSourceCreate
 
 export const deleteIncomeSource = async (id: number): Promise<void> => {
   await api.delete(`/income_sources/${id}`);
+};
+
+// Security/Ticker endpoints
+export const getSecurities = async (): Promise<Security[]> => {
+  const response = await api.get<Security[]>('/securities');
+  return response.data;
+};
+
+export const getSecurity = async (securityId: number): Promise<Security> => {
+  const response = await api.get<Security>(`/securities/${securityId}`);
+  return response.data;
+};
+
+export const getSecurityBySymbol = async (symbol: string): Promise<Security> => {
+  const response = await api.get<Security>(`/securities/symbol/${symbol}`);
+  return response.data;
+};
+
+export const createOrGetSecurity = async (payload: SecurityCreate): Promise<Security> => {
+  const response = await api.post<Security>('/securities', payload);
+  return response.data;
+};
+
+// RSU Grant Forecast endpoints
+export const getRSUForecasts = async (scenarioId: number): Promise<RSUGrantForecastRead[]> => {
+  const response = await api.get<RSUGrantForecastRead[]>(`/scenarios/${scenarioId}/rsu_forecasts`);
+  return response.data;
+};
+
+export const createRSUForecast = async (scenarioId: number, payload: RSUGrantForecastCreate): Promise<RSUGrantForecastRead> => {
+  const response = await api.post<RSUGrantForecastRead>(`/scenarios/${scenarioId}/rsu_forecasts`, payload);
+  return response.data;
+};
+
+export const updateRSUForecast = async (forecastId: number, payload: RSUGrantForecastCreate): Promise<RSUGrantForecastRead> => {
+  const response = await api.put<RSUGrantForecastRead>(`/rsu_forecasts/${forecastId}`, payload);
+  return response.data;
+};
+
+export const deleteRSUForecast = async (forecastId: number): Promise<void> => {
+  await api.delete(`/rsu_forecasts/${forecastId}`);
+};
+
+// RSU Grant Details endpoint
+export const getRSUGrantDetails = async (assetId: number): Promise<RSUGrantDetailsResponse> => {
+  const response = await api.get<RSUGrantDetailsResponse>(`/assets/${assetId}/rsu_details`);
+  return response.data;
 };

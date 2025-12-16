@@ -1,6 +1,9 @@
 from sqlmodel import SQLModel, create_engine, Session
 import os
 
+# Import all models so SQLModel can create tables
+from . import models  # noqa: F401
+
 # Get the project root directory (one level up from backend/)
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(backend_dir)
