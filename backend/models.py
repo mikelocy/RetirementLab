@@ -15,6 +15,16 @@ class IncomeType(str, Enum):
     TAX_EXEMPT = "tax_exempt"      # Not taxable (e.g., VA disability, some disability insurance)
     DISABILITY = "disability"      # Disability income (may be taxable or exempt depending on source)
 
+class TaxFundingSource(str, Enum):
+    CASH = "CASH"
+    TAXABLE_BROKERAGE = "TAXABLE_BROKERAGE"
+    TRADITIONAL_RETIREMENT = "TRADITIONAL_RETIREMENT"
+    ROTH = "ROTH"
+
+class InsufficientFundsBehavior(str, Enum):
+    FAIL_WITH_SHORTFALL = "FAIL_WITH_SHORTFALL"
+    LIQUIDATE_ALL_AVAILABLE = "LIQUIDATE_ALL_AVAILABLE"
+
 # Import FilingStatus from tax_config to avoid circular imports
 from .tax_config import FilingStatus
 
@@ -37,6 +47,7 @@ class Scenario(SQLModel, table=True):
     assets: List["Asset"] = Relationship(back_populates="scenario")
     income_sources: List["IncomeSource"] = Relationship(back_populates="scenario")
     rsu_grant_forecasts: List["RSUGrantForecast"] = Relationship(back_populates="scenario")
+    tax_funding_settings: Optional["TaxFundingSettings"] = Relationship(back_populates="scenario", sa_relationship_kwargs={"uselist": False})
 
 class IncomeSource(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -159,9 +170,6 @@ class RSUGrantDetails(SQLModel, table=True):
     grant_fmv_at_grant: float  # Fair market value per share at grant date
     shares_granted: float  # Computed: grant_value / grant_fmv_at_grant
     
-    # Share withholding (mechanical only - affects net shares delivered, not taxable income)
-    estimated_share_withholding_rate: float = 0.37  # Default 37% - used only to estimate net shares delivered at vesting
-    
     asset: Optional[Asset] = Relationship(back_populates="rsu_grant_details")
     security: Optional["Security"] = Relationship()
     vesting_tranches: List["RSUVestingTranche"] = Relationship(back_populates="grant")
@@ -184,7 +192,6 @@ class RSUGrantForecast(SQLModel, table=True):
     first_grant_date: datetime
     grant_frequency: str = "annual"  # "annual", "quarterly", etc.
     grant_value: float  # Dollar amount per grant
-    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting
     
     # Vesting template - store as JSON or reference to a pattern
     # For v1, we'll store a simple structure that can be copied to new grants
@@ -194,3 +201,20 @@ class RSUGrantForecast(SQLModel, table=True):
     
     scenario: Optional[Scenario] = Relationship()
     security: Optional["Security"] = Relationship()
+
+# Tax Funding Settings (1:1 with Scenario)
+class TaxFundingSettings(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scenario_id: int = Field(foreign_key="scenario.id", unique=True)
+    
+    # Tax funding order as JSON string (array of TaxFundingSource enums)
+    # Default: ["CASH", "TAXABLE_BROKERAGE", "TRADITIONAL_RETIREMENT", "ROTH"]
+    tax_funding_order_json: str = Field(default='["CASH", "TAXABLE_BROKERAGE", "TRADITIONAL_RETIREMENT", "ROTH"]')
+    
+    allow_retirement_withdrawals_for_taxes: bool = Field(default=True)
+    if_insufficient_funds_behavior: InsufficientFundsBehavior = Field(default=InsufficientFundsBehavior.FAIL_WITH_SHORTFALL)
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    scenario: Optional[Scenario] = Relationship(back_populates="tax_funding_settings")

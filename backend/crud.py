@@ -102,7 +102,11 @@ def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCrea
         
         # Initialize current_balance based on type and details
         current_balance = 0.0
-        if asset_type == "real_estate":
+        if asset_type == "cash":
+            # Cash assets use current_balance directly from AssetCreate
+            assert asset_data.current_balance is not None, "Cash balance required for cash assets"
+            current_balance = asset_data.current_balance
+        elif asset_type == "real_estate":
             assert asset_data.real_estate_details is not None, "Real estate details required"
             current_balance = asset_data.real_estate_details.property_value
         elif asset_type == "general_equity":
@@ -111,6 +115,10 @@ def create_typed_asset(session: Session, scenario_id: int, asset_data: AssetCrea
         elif asset_type == "specific_stock":
             assert asset_data.specific_stock_details is not None, "Specific stock details required"
             current_balance = asset_data.specific_stock_details.shares_owned * asset_data.specific_stock_details.current_price
+        elif asset_type == "rsu_grant":
+            assert asset_data.rsu_grant_details is not None, "RSU grant details required"
+            # For RSU grants, use the grant_value as the current balance (represents unvested value at grant date)
+            current_balance = asset_data.rsu_grant_details.grant_value
         else:
             current_balance = 0.0
 
@@ -209,7 +217,22 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
     db_asset.type = asset_data.type
     
     # Update current_balance and nested details
-    if db_asset.type == "real_estate":
+    if db_asset.type == "cash":
+        # Cash assets - just update balance
+        if asset_data.current_balance is not None:
+            db_asset.current_balance = asset_data.current_balance
+        
+        # Remove other type details if they exist (e.g. if type changed)
+        if db_asset.real_estate_details:
+            session.delete(db_asset.real_estate_details)
+        if db_asset.general_equity_details:
+            session.delete(db_asset.general_equity_details)
+        if db_asset.specific_stock_details:
+            session.delete(db_asset.specific_stock_details)
+        if db_asset.rsu_grant_details:
+            session.delete(db_asset.rsu_grant_details)
+            
+    elif db_asset.type == "real_estate":
         if not asset_data.real_estate_details:
             return None # validation error in real app
         

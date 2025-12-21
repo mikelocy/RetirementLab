@@ -2,15 +2,66 @@ from typing import Dict, List, Tuple, Optional
 import sys
 from datetime import datetime
 from sqlmodel import Session, select
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, DepreciationMethod, Security, RSUGrantDetails, RSUVestingTranche
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, DepreciationMethod, Security, RSUGrantDetails, RSUVestingTranche, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior
 from .crud import get_assets_for_scenario, get_income_sources_for_scenario, get_security, get_security_by_symbol
 from .tax_engine import TaxableIncomeBreakdown, calculate_taxes, TaxResult
 from .tax_config import FilingStatus
+import json
 
 # Helper function to print and flush immediately
 def print_flush(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
+
+def extract_tax_numbers(tax_result) -> Tuple[float, float, float]:
+    """
+    Safely extract federal, state, and total tax from TaxResult.
+    Handles different field names and Pydantic models.
+    
+    Returns:
+        Tuple of (federal_tax, state_tax, total_tax)
+    """
+    # Try to get as dict if it's a Pydantic model
+    tax_dict = None
+    if hasattr(tax_result, 'model_dump'):
+        tax_dict = tax_result.model_dump()
+    elif hasattr(tax_result, 'dict'):
+        tax_dict = tax_result.dict()
+    elif isinstance(tax_result, dict):
+        tax_dict = tax_result
+    
+    # Extract federal tax (may be split into ordinary and ltcg)
+    federal_tax = 0.0
+    if tax_dict:
+        federal_ordinary = tax_dict.get('federal_ordinary_tax', 0.0)
+        federal_ltcg = tax_dict.get('federal_ltcg_tax', 0.0)
+        federal_tax = federal_ordinary + federal_ltcg
+        # Also check for direct federal_tax field (if it exists, use it instead)
+        if 'federal_tax' in tax_dict:
+            federal_tax = tax_dict.get('federal_tax', 0.0)
+    else:
+        # Try direct attribute access with fallbacks
+        federal_ordinary = getattr(tax_result, 'federal_ordinary_tax', 0.0)
+        federal_ltcg = getattr(tax_result, 'federal_ltcg_tax', 0.0)
+        federal_tax = federal_ordinary + federal_ltcg
+        if hasattr(tax_result, 'federal_tax'):
+            federal_tax = getattr(tax_result, 'federal_tax', 0.0)
+    
+    # Extract state tax
+    state_tax = 0.0
+    if tax_dict:
+        state_tax = tax_dict.get('state_tax', 0.0)
+    else:
+        state_tax = getattr(tax_result, 'state_tax', 0.0)
+    
+    # Extract total tax
+    total_tax = 0.0
+    if tax_dict:
+        total_tax = tax_dict.get('total_tax', 0.0)
+    else:
+        total_tax = getattr(tax_result, 'total_tax', 0.0)
+    
+    return (federal_tax, state_tax, total_tax)
 
 def get_stock_price_for_security(
     session: Session,
@@ -163,7 +214,248 @@ def calculate_property_sale(
     
     return (net_sale_price, depreciation_recapture, capital_gain)
 
-def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
+def fund_tax_liability(
+    tax_due: float,
+    asset_states: Dict,
+    assets: List[Asset],
+    asset_details: Dict,
+    tax_funding_order: List[TaxFundingSource],
+    allow_retirement_withdrawals: bool,
+    if_insufficient_funds_behavior: InsufficientFundsBehavior,
+    session: Session,
+    sim_year: int,
+    scenario: Scenario
+) -> Tuple[Dict, float, float, float]:
+    """
+    Fund tax liability by liquidating assets according to tax_funding_order.
+    
+    Returns:
+        (updated_asset_states, additional_ordinary_income, additional_ltcg, shortfall)
+        - updated_asset_states: Modified asset_states dict
+        - additional_ordinary_income: Income from traditional retirement withdrawals
+        - additional_ltcg: Capital gains from taxable asset sales
+        - shortfall: Amount that couldn't be funded
+    """
+    remaining_tax_due = tax_due
+    additional_ordinary_income = 0.0
+    additional_ltcg = 0.0
+    updated_states = asset_states.copy()  # Work with a copy
+    
+    # Track cash available (for v1, we don't model explicit cash, so start at 0)
+    cash_available = 0.0
+    
+    for funding_source in tax_funding_order:
+        if remaining_tax_due <= 0.0:
+            break
+            
+        if funding_source == TaxFundingSource.CASH:
+            # Use available cash from cash assets
+            for asset in assets:
+                asset_id = asset.id
+                if asset_id not in updated_states:
+                    continue
+                    
+                if asset.type == "cash":
+                    balance = updated_states[asset_id].get("balance", 0.0)
+                    if balance > 0:
+                        cash_used = min(balance, remaining_tax_due)
+                        updated_states[asset_id]["balance"] = balance - cash_used
+                        remaining_tax_due -= cash_used
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+            
+        elif funding_source == TaxFundingSource.TAXABLE_BROKERAGE:
+            # Sell taxable assets (general_equity and specific_stock with TAXABLE wrapper)
+            for asset in assets:
+                asset_id = asset.id
+                if asset_id not in updated_states:
+                    continue
+                    
+                st = updated_states[asset_id]
+                wrapper = st.get("tax_wrapper", TaxWrapper.TAXABLE)
+                
+                # Normalize to enum
+                if isinstance(wrapper, str):
+                    try:
+                        wrapper = TaxWrapper(wrapper.lower())
+                    except ValueError:
+                        wrapper = TaxWrapper.TAXABLE
+                
+                if wrapper != TaxWrapper.TAXABLE:
+                    continue
+                
+                # Check asset type
+                if asset.type == "general_equity":
+                    balance = st.get("balance", 0.0)
+                    if balance > 0:
+                        # Calculate gain ratio
+                        cost_basis = st.get("cost_basis", balance)
+                        if balance > 0:
+                            gain_ratio = max(0.0, (balance - cost_basis) / balance)
+                        else:
+                            gain_ratio = 0.0
+                        
+                        # Sell enough to cover remaining tax
+                        sale_amount = min(balance, remaining_tax_due)
+                        taxable_gain = sale_amount * gain_ratio
+                        return_of_capital = sale_amount - taxable_gain
+                        
+                        # Update state
+                        st["balance"] = balance - sale_amount
+                        st["cost_basis"] = max(0.0, cost_basis - return_of_capital)
+                        
+                        additional_ltcg += taxable_gain
+                        remaining_tax_due -= sale_amount
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+                            
+                elif asset.type == "specific_stock":
+                    balance = st.get("balance", 0.0)
+                    shares_owned = st.get("shares_owned", 0.0)
+                    current_price = st.get("current_price", 0.0)
+                    cost_basis = st.get("cost_basis", balance)
+                    
+                    if balance > 0 and shares_owned > 0 and current_price > 0:
+                        # Calculate gain ratio
+                        if balance > 0:
+                            gain_ratio = max(0.0, (balance - cost_basis) / balance)
+                        else:
+                            gain_ratio = 0.0
+                        
+                        # Sell enough shares to cover remaining tax
+                        sale_amount = min(balance, remaining_tax_due)
+                        shares_to_sell = sale_amount / current_price
+                        shares_to_sell = min(shares_to_sell, shares_owned)
+                        actual_sale_amount = shares_to_sell * current_price
+                        
+                        taxable_gain = actual_sale_amount * gain_ratio
+                        return_of_capital = actual_sale_amount - taxable_gain
+                        
+                        # Update state
+                        st["balance"] = balance - actual_sale_amount
+                        st["shares_owned"] = shares_owned - shares_to_sell
+                        st["cost_basis"] = max(0.0, cost_basis - return_of_capital)
+                        
+                        additional_ltcg += taxable_gain
+                        remaining_tax_due -= actual_sale_amount
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+                
+                # Also check RSU vested lots (they become taxable stock)
+                elif asset.type == "rsu_grant":
+                    vested_lots = st.get("vested_lots", [])
+                    for lot in vested_lots:
+                        if remaining_tax_due <= 0.0:
+                            break
+                            
+                        current_value = lot.get("current_value", 0.0)
+                        if current_value <= 0.0:
+                            continue
+                        
+                        # RSU vested shares are taxable when sold
+                        basis_total = lot.get("basis_total", 0.0)
+                        if current_value > 0:
+                            gain_ratio = max(0.0, (current_value - basis_total) / current_value)
+                        else:
+                            gain_ratio = 0.0
+                        
+                        # Sell enough to cover remaining tax
+                        sale_amount = min(current_value, remaining_tax_due)
+                        taxable_gain = sale_amount * gain_ratio
+                        return_of_capital = sale_amount - taxable_gain
+                        
+                        # Update lot (reduce shares proportionally)
+                        net_shares = lot.get("shares_vested", 0.0)  # All shares are received now
+                        if net_shares > 0:
+                            shares_sold_ratio = sale_amount / current_value
+                            lot["shares_vested"] = net_shares * (1 - shares_sold_ratio)
+                            lot["basis_total"] = max(0.0, basis_total - return_of_capital)
+                            lot["current_value"] = current_value - sale_amount
+                        
+                        additional_ltcg += taxable_gain
+                        remaining_tax_due -= sale_amount
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+                            
+        elif funding_source == TaxFundingSource.TRADITIONAL_RETIREMENT:
+            if not allow_retirement_withdrawals:
+                continue
+                
+            # Withdraw from traditional retirement accounts (taxable as ordinary income)
+            for asset in assets:
+                asset_id = asset.id
+                if asset_id not in updated_states:
+                    continue
+                    
+                st = updated_states[asset_id]
+                wrapper = st.get("tax_wrapper", TaxWrapper.TAXABLE)
+                
+                # Normalize to enum
+                if isinstance(wrapper, str):
+                    try:
+                        wrapper = TaxWrapper(wrapper.lower())
+                    except ValueError:
+                        wrapper = TaxWrapper.TAXABLE
+                
+                if wrapper != TaxWrapper.TRADITIONAL:
+                    continue
+                
+                if asset.type == "general_equity":
+                    balance = st.get("balance", 0.0)
+                    if balance > 0:
+                        withdrawal_amount = min(balance, remaining_tax_due)
+                        st["balance"] = balance - withdrawal_amount
+                        
+                        # Traditional withdrawals are fully taxable as ordinary income
+                        additional_ordinary_income += withdrawal_amount
+                        remaining_tax_due -= withdrawal_amount
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+                            
+        elif funding_source == TaxFundingSource.ROTH:
+            # Withdraw from Roth accounts (tax-free)
+            for asset in assets:
+                asset_id = asset.id
+                if asset_id not in updated_states:
+                    continue
+                    
+                st = updated_states[asset_id]
+                wrapper = st.get("tax_wrapper", TaxWrapper.TAXABLE)
+                
+                # Normalize to enum
+                if isinstance(wrapper, str):
+                    try:
+                        wrapper = TaxWrapper(wrapper.lower())
+                    except ValueError:
+                        wrapper = TaxWrapper.TAXABLE
+                
+                if wrapper != TaxWrapper.ROTH:
+                    continue
+                
+                if asset.type == "general_equity":
+                    balance = st.get("balance", 0.0)
+                    if balance > 0:
+                        withdrawal_amount = min(balance, remaining_tax_due)
+                        st["balance"] = balance - withdrawal_amount
+                        remaining_tax_due -= withdrawal_amount
+                        
+                        if remaining_tax_due <= 0.0:
+                            break
+    
+    # Determine shortfall
+    shortfall = remaining_tax_due if remaining_tax_due > 0.0 else 0.0
+    
+    # If LIQUIDATE_ALL_AVAILABLE, we've already liquidated everything we could
+    # Shortfall remains but we've done our best
+    
+    return (updated_states, additional_ordinary_income, additional_ltcg, shortfall)
+
+def run_simple_bond_simulation(session: Session, scenario_id: int, debug: bool = False) -> Dict:
     scenario = session.get(Scenario, scenario_id)
     if not scenario:
         return {}
@@ -171,6 +463,26 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     # Load assets with their detail relationships
     assets = get_assets_for_scenario(session, scenario_id)
     income_sources_db = get_income_sources_for_scenario(session, scenario_id)
+    
+    # Create assets dict for quick lookup
+    assets_dict = {asset.id: asset for asset in assets}
+    
+    # Load tax funding settings
+    tax_settings = session.exec(
+        select(TaxFundingSettings).where(TaxFundingSettings.scenario_id == scenario_id)
+    ).first()
+    
+    # Default tax funding settings if not found
+    if not tax_settings:
+        default_order = [TaxFundingSource.CASH, TaxFundingSource.TAXABLE_BROKERAGE, 
+                        TaxFundingSource.TRADITIONAL_RETIREMENT, TaxFundingSource.ROTH]
+        tax_funding_order = default_order
+        allow_retirement_withdrawals = True
+        if_insufficient_funds_behavior = InsufficientFundsBehavior.FAIL_WITH_SHORTFALL
+    else:
+        tax_funding_order = [TaxFundingSource(s) for s in json.loads(tax_settings.tax_funding_order_json)]
+        allow_retirement_withdrawals = tax_settings.allow_retirement_withdrawals_for_taxes
+        if_insufficient_funds_behavior = tax_settings.if_insufficient_funds_behavior
     
     # Load detail records for each asset
     asset_details = {}
@@ -245,6 +557,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     # Track per-asset state
     asset_states = {}
     
+    # Track vested stock holdings from RSU vesting (in-memory, by security_id)
+    # Structure: {security_id: {"shares": float, "basis_per_share": float, ...}}
+    vested_stock_holdings = {}
+    
     print(f"DEBUG: Running simulation for scenario {scenario.id}. Range: {scenario.current_age} to {scenario.end_age}")
     
     for asset in assets:
@@ -307,16 +623,11 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             ).all()
             
             # Calculate total shares that have already vested
-            # Reverse calculate from net shares: net_shares = shares_vested * (1 - tax_rate)
+            # All shares that vested are now in SpecificStockDetails (no withholding reduction)
             total_vested_shares = 0.0
             for stock_detail in past_vested_stock:
-                net_shares = stock_detail.shares_owned
-                # Reverse calculate: shares_vested = net_shares / (1 - tax_rate)
-                if rsu_grant.estimated_share_withholding_rate < 1.0:
-                    shares_vested = net_shares / (1 - rsu_grant.estimated_share_withholding_rate)
-                else:
-                    shares_vested = net_shares
-                total_vested_shares += shares_vested
+                # Past vested shares are stored as the full shares_vested (no withholding)
+                total_vested_shares += stock_detail.shares_owned
             
             # Calculate unvested shares (will be updated as future vesting occurs)
             unvested_shares = max(0.0, rsu_grant.shares_granted - total_vested_shares)
@@ -328,10 +639,15 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 "shares_granted": rsu_grant.shares_granted,
                 "unvested_shares": unvested_shares,
                 "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
-                "estimated_share_withholding_rate": rsu_grant.estimated_share_withholding_rate,
                 "tranches": tranches,
                 "vested_lots": []  # Only track future vesting (in-memory)
                 # Past vested shares are tracked as separate SpecificStockDetails assets
+            }
+        elif asset.type == "cash":
+            # Cash asset - simple balance tracking, no appreciation
+            asset_states[asset.id] = {
+                "type": "cash",
+                "balance": asset.current_balance
             }
         else:
             # Asset without details - use current_balance
@@ -347,6 +663,10 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     state_tax_list = []
     total_tax_list = []
     effective_tax_rate_list = []
+    tax_shortfall_list = []  # Track tax shortfalls per year
+    
+    # Debug trace for diagnostics
+    debug_trace = [] if debug else None
 
     # Calculate current calendar year from base_year
     # base_year is the calendar year corresponding to current_age
@@ -356,11 +676,105 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     else:
         current_calendar_year = scenario.base_year
     
+    # Calculate number of simulation years
+    num_years = scenario.end_age - scenario.current_age + 1
+    
+    # Pre-initialize synthetic vested RSU asset arrays for all securities with RSU grants
+    # This ensures all asset_values arrays have the same length as ages
+    for asset in assets:
+        if asset.type == "rsu_grant" and asset.id in asset_details:
+            rsu_grant = asset_details[asset.id]["details"]
+            if rsu_grant and rsu_grant.security_id:
+                synthetic_asset_id = -rsu_grant.security_id
+                if synthetic_asset_id not in asset_values:
+                    asset_values[synthetic_asset_id] = [0.0] * num_years
+    
     for age in range(scenario.current_age, scenario.end_age + 1):
         years_from_start = age - scenario.current_age
         sim_year = current_calendar_year + years_from_start
         
         ages.append(age)
+        
+        # Calculate year index (0-based) for time series alignment
+        year_index = age - scenario.current_age
+        
+        # Initialize debug trace entry for this year
+        if debug:
+            year_trace = {
+                "age": age,
+                "year": sim_year,
+                "rsu": {},
+                "income": {},
+                "tax": {},
+                "cash": {},
+                "asset_totals": {}
+            }
+            # Capture start-of-year state
+            # Capture start-of-year state (including RSU unvested values and vested holdings)
+            total_assets_start = 0.0
+            for aid, st in asset_states.items():
+                if "balance" in st:
+                    total_assets_start += st.get("balance", 0.0)
+                elif "property_value" in st:
+                    total_assets_start += st.get("property_value", 0.0)
+                elif st.get("type") == "rsu_grant":
+                    # Include RSU unvested value at start of year
+                    rsu_grant = asset_details.get(aid, {}).get("details")
+                    if rsu_grant:
+                        unvested_shares = st.get("unvested_shares", 0.0)
+                        grant_fmv = st.get("grant_fmv_at_grant", 0.0)
+                        grant_date = rsu_grant.grant_date
+                        grant_year = grant_date.year if hasattr(grant_date, 'year') else sim_year
+                        years_since_grant = sim_year - grant_year
+                        security = session.get(Security, st.get("security_id"))
+                        appreciation_rate = security.assumed_appreciation_rate if security else 0.07
+                        current_price = grant_fmv * ((1 + appreciation_rate) ** years_since_grant)
+                        total_assets_start += unvested_shares * current_price
+            
+            # Add vested holdings value at start of year
+            for security_id, holding in vested_stock_holdings.items():
+                shares = holding.get("shares", 0.0)
+                if shares > 0:
+                    security = session.get(Security, security_id)
+                    if security:
+                        appreciation_rate = security.assumed_appreciation_rate if security else 0.07
+                        basis_per_share = holding.get("basis_per_share", 0.0)
+                        first_vest_year = holding.get("first_vest_year", sim_year)
+                        if basis_per_share > 0:
+                            years_since_first_vest = sim_year - first_vest_year
+                            current_price = basis_per_share * ((1 + appreciation_rate) ** years_since_first_vest)
+                            total_assets_start += shares * current_price
+            cash_start = sum(
+                asset_states[aid].get("balance", 0.0)
+                for aid, st in asset_states.items()
+                if assets_dict.get(aid) and assets_dict[aid].type == "cash"
+            )
+            year_trace["asset_totals"]["total_assets_start"] = total_assets_start
+            year_trace["cash"]["cash_start"] = cash_start
+            
+            # Capture RSU start state
+            for asset_id, st in asset_states.items():
+                if st.get("type") == "rsu_grant":
+                    rsu_grant = asset_details.get(asset_id, {}).get("details")
+                    if rsu_grant:
+                        unvested_shares = st.get("unvested_shares", 0.0)
+                        grant_fmv = st.get("grant_fmv_at_grant", 0.0)
+                        grant_date = rsu_grant.grant_date
+                        grant_year = grant_date.year if hasattr(grant_date, 'year') else sim_year
+                        years_since_grant = sim_year - grant_year
+                        # Get appreciation rate
+                        security = session.get(Security, st.get("security_id"))
+                        appreciation_rate = security.assumed_appreciation_rate if security else 0.07
+                        current_price = grant_fmv * ((1 + appreciation_rate) ** years_since_grant)
+                        unvested_value_start = unvested_shares * current_price
+                        year_trace["rsu"][asset_id] = {
+                            "unvested_value_start": unvested_value_start,
+                            "unvested_shares_start": unvested_shares,
+                            "shares_granted": st.get("shares_granted", 0.0),
+                            "shares_vested_this_year": 0.0,
+                            "fmv_at_vest": 0.0,
+                            "vested_value_this_year": 0.0
+                        }
         
         # Reset yearly income buckets
         ordinary_income = 0.0
@@ -395,8 +809,8 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 vested_lots = st.get("vested_lots", [])
                 for lot in vested_lots:
                     lot_fmv = lot.get("fmv_on_vest", 0.0)
-                    net_shares = lot.get("net_shares_received", 0.0)
-                    temp_balances[aid] += net_shares * lot_fmv
+                    shares_vested = lot.get("shares_vested", 0.0)
+                    temp_balances[aid] += shares_vested * lot_fmv
             elif "balance" in st:
                 temp_balances[aid] = st["balance"]
             else:
@@ -456,7 +870,6 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 security_id = st.get("security_id")
                 shares_granted = st.get("shares_granted", 0.0)
                 grant_fmv = st.get("grant_fmv_at_grant", 0.0)
-                estimated_share_withholding_rate = st.get("estimated_share_withholding_rate", 0.37)
                 tranches = st.get("tranches", [])
                 vested_lots = st.get("vested_lots", [])
                 
@@ -501,30 +914,24 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                         # Calculate vesting income (full FMV of shares vesting)
                         vesting_income = shares_vesting * fmv_on_vest
                         
-                        # Calculate share withholding (mechanical only - affects net shares delivered, not taxable income)
-                        # Withholding reduces net shares received but does NOT reduce taxable income
-                        shares_withheld = shares_vesting * estimated_share_withholding_rate
-                        net_shares_received = shares_vesting - shares_withheld
-                        
-                        # Add to ordinary income (full FMV of shares vesting, not reduced by withholding)
+                        # All shares vesting are delivered (no withholding)
+                        # Add to ordinary income (full FMV of shares vesting)
                         # This is taxable income, but NOT cash income
                         ordinary_income += vesting_income
                         rsu_vesting_income += vesting_income  # Track separately for cash flow calculation
                         
-                        # Calculate basis for vested lot
+                        # Calculate basis for vested lot (basis = FMV at vest)
                         basis_per_share = fmv_on_vest
-                        basis_total = net_shares_received * basis_per_share
+                        basis_total = shares_vesting * basis_per_share
                         
                         # Create vested lot (in-memory for future, or mark for persistence if past)
                         vested_lot = {
                             "vesting_date": vesting_date,
                             "vesting_year": vesting_year,
                             "shares_vested": shares_vesting,
-                            "net_shares_received": net_shares_received,
                             "fmv_on_vest": fmv_on_vest,
                             "basis_per_share": basis_per_share,
                             "basis_total": basis_total,
-                            "shares_withheld": shares_withheld,
                             "vesting_income": vesting_income,
                             "is_past_vesting": vesting_year <= as_of_year,
                             "grant_id": grant_id,
@@ -535,14 +942,47 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                         # Update unvested shares
                         st["unvested_shares"] = st.get("unvested_shares", shares_granted) - shares_vesting
                         
+                        # Transfer vested shares to vested_stock_holdings
+                        if security_id not in vested_stock_holdings:
+                            vested_stock_holdings[security_id] = {
+                                "shares": 0.0,
+                                "basis_per_share": 0.0,  # Weighted average basis
+                                "total_basis": 0.0,
+                                "first_vest_year": vesting_year  # Track first vesting year for appreciation
+                            }
+                        
+                        # Add shares to vested holdings (weighted average basis)
+                        current_shares = vested_stock_holdings[security_id]["shares"]
+                        current_basis = vested_stock_holdings[security_id]["total_basis"]
+                        new_shares = shares_vesting
+                        new_basis = basis_total
+                        
+                        total_shares = current_shares + new_shares
+                        total_basis = current_basis + new_basis
+                        
+                        vested_stock_holdings[security_id]["shares"] = total_shares
+                        vested_stock_holdings[security_id]["total_basis"] = total_basis
+                        if total_shares > 0:
+                            vested_stock_holdings[security_id]["basis_per_share"] = total_basis / total_shares
+                        else:
+                            vested_stock_holdings[security_id]["basis_per_share"] = 0.0
+                        
+                        # Update first_vest_year if this is earlier
+                        if vesting_year < vested_stock_holdings[security_id].get("first_vest_year", sim_year + 1):
+                            vested_stock_holdings[security_id]["first_vest_year"] = vesting_year
+                        
+                        # Capture vesting event in debug trace
+                        if debug and asset_id in year_trace.get("rsu", {}):
+                            year_trace["rsu"][asset_id]["shares_vested_this_year"] += shares_vesting
+                            year_trace["rsu"][asset_id]["fmv_at_vest"] = fmv_on_vest
+                            year_trace["rsu"][asset_id]["vested_value_this_year"] += vesting_income
+                        
                         print_flush(f"\nRSU VESTING - Age {age}, Year {sim_year}")
                         print_flush(f"  Grant ID: {grant_id}")
                         print_flush(f"  Shares vesting: {shares_vesting:.4f}")
                         print_flush(f"  FMV per share at vest: ${fmv_on_vest:.2f}")
                         print_flush(f"  Vesting income (ordinary): ${vesting_income:,.2f}")
-                        print_flush(f"  Estimated share withholding rate: {estimated_share_withholding_rate*100:.1f}%")
-                        print_flush(f"  Shares withheld: {shares_withheld:.4f}")
-                        print_flush(f"  Net shares received: {net_shares_received:.4f}")
+                        print_flush(f"  Shares received: {shares_vesting:.4f} (all shares, no withholding)")
                         print_flush(f"  Basis per share: ${basis_per_share:.2f}")
                         print_flush(f"  Total basis: ${basis_total:,.2f}")
                 
@@ -798,7 +1238,6 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                         # SIMPLIFICATION: If type is real_estate, treat as tax_exempt_income (like return of capital or loan proceeds for now)
                         if "property_value" in st:
                             tax_exempt_income += actual_drawdown
-                        
                         else:
                             # Securities Asset
                             wrapper = st.get("tax_wrapper", TaxWrapper.TAXABLE)
@@ -962,6 +1401,27 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         # from house sales (broken down into taxable and non-taxable portions)
         gross_income_all = ordinary_income + long_term_cap_gains + qualified_dividends + tax_exempt_income + social_security_benefits
         
+        # Capture income and tax in debug trace
+        if debug:
+            # Print tax_result structure once for debugging (first year only)
+            if age == scenario.current_age:
+                if hasattr(tax_result, 'model_dump'):
+                    print_flush(f"\nDEBUG: TaxResult structure (first year): {tax_result.model_dump()}")
+                elif hasattr(tax_result, 'dict'):
+                    print_flush(f"\nDEBUG: TaxResult structure (first year): {tax_result.dict()}")
+                else:
+                    print_flush(f"\nDEBUG: TaxResult attributes: {dir(tax_result)}")
+            
+            year_trace["income"]["gross_income_total"] = gross_income_all
+            year_trace["income"]["ordinary_income_total"] = ordinary_income
+            year_trace["income"]["rsu_ordinary_income"] = rsu_vesting_income
+            
+            # Safely extract tax numbers
+            fed_tax, state_tax_val, total_tax_val = extract_tax_numbers(tax_result)
+            year_trace["tax"]["federal_tax"] = fed_tax
+            year_trace["tax"]["state_tax"] = state_tax_val
+            year_trace["tax"]["total_tax"] = total_tax_val
+        
         # For cash flow: RSU vesting income is NOT cash, so exclude it from net income
         # But taxes on vesting income ARE cash that must be paid
         # So: net_after_tax_income = (gross_income - rsu_vesting_income) - total_tax
@@ -995,11 +1455,99 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             print_flush(f"  Net after-tax income: ${net_after_tax_income:,.2f}")
             print_flush(f"{'='*80}\n")
         
-        # Store Tax Results
+        # --- TAX FUNDING ---
+        # Fund taxes using the tax funding policy (iterative loop to handle additional taxes from liquidations)
+        max_iterations = 3
+        iteration = 0
+        initial_tax_due = tax_result.total_tax
+        total_tax_funded = 0.0
+        tax_shortfall = 0.0
+        
+        # Store original income buckets for recalculation
+        original_ordinary = ordinary_income
+        original_ltcg = long_term_cap_gains
+        cumulative_additional_ordinary = 0.0
+        cumulative_additional_ltcg = 0.0
+        
+        while iteration < max_iterations:
+            # Calculate current tax due (initial + any additional from previous liquidations)
+            current_tax_due = initial_tax_due + (tax_result.total_tax - initial_tax_due) - total_tax_funded
+            
+            if current_tax_due <= 0.01:  # Small threshold
+                break
+            
+            # Fund the tax liability
+            updated_states, additional_ordinary, additional_ltcg, shortfall = fund_tax_liability(
+                tax_due=current_tax_due,
+                asset_states=asset_states,
+                assets=assets,
+                asset_details=asset_details,
+                tax_funding_order=tax_funding_order,
+                allow_retirement_withdrawals=allow_retirement_withdrawals,
+                if_insufficient_funds_behavior=if_insufficient_funds_behavior,
+                session=session,
+                sim_year=sim_year,
+                scenario=scenario
+            )
+            
+            # Update asset_states with the changes from funding
+            asset_states = updated_states
+            tax_shortfall = shortfall
+            total_tax_funded += (current_tax_due - shortfall)
+            
+            # Track cumulative additional income from liquidations
+            cumulative_additional_ordinary += additional_ordinary
+            cumulative_additional_ltcg += additional_ltcg
+            
+            # If we have additional income from liquidations, recalculate taxes
+            if additional_ordinary > 0.0 or additional_ltcg > 0.0:
+                # Update income buckets with cumulative additions
+                ordinary_income = original_ordinary + cumulative_additional_ordinary
+                long_term_cap_gains = original_ltcg + cumulative_additional_ltcg
+                
+                # Recalculate taxes with new income
+                tax_breakdown = TaxableIncomeBreakdown(
+                    ordinary_income=ordinary_income,
+                    long_term_cap_gains=long_term_cap_gains,
+                    qualified_dividends=qualified_dividends,
+                    tax_exempt_income=tax_exempt_income,
+                    social_security_benefits=social_security_benefits
+                )
+                
+                new_tax_result = calculate_taxes(
+                    year=sim_year,
+                    filing_status=scenario.filing_status,
+                    state="CA",
+                    breakdown=tax_breakdown
+                )
+                
+                # Check if there's additional tax due from the liquidations
+                new_total_tax = new_tax_result.total_tax
+                additional_tax_from_liquidations = new_total_tax - initial_tax_due
+                
+                if additional_tax_from_liquidations > total_tax_funded + 0.01:  # Small threshold
+                    # We need to fund more tax
+                    tax_result = new_tax_result
+                    iteration += 1
+                else:
+                    # We've funded enough (or shortfall)
+                    tax_result = new_tax_result
+                    break
+            else:
+                # No additional income generated, we're done (or shortfall)
+                break
+        
+        # Store final tax results and shortfall
         federal_tax_list.append(tax_result.federal_ordinary_tax + tax_result.federal_ltcg_tax)
         state_tax_list.append(tax_result.state_tax)
         total_tax_list.append(tax_result.total_tax)
         effective_tax_rate_list.append(tax_result.effective_total_rate)
+        tax_shortfall_list.append(tax_shortfall)
+        
+        # Update net_after_tax_income to reflect actual taxes paid (may have changed due to liquidations)
+        gross_income_all = ordinary_income + long_term_cap_gains + qualified_dividends + tax_exempt_income + social_security_benefits
+        gross_income_for_cash_flow = gross_income_all - rsu_vesting_income
+        net_after_tax_income = gross_income_for_cash_flow - tax_result.total_tax
 
         # Calculate Uncovered Spending (Deficit) based on NET Income
         # total_income_available was previously just gross specific + rental.
@@ -1157,6 +1705,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                     continue
                     
                 state = asset_states[asset_id]
+                rsu_grant = asset_details[asset_id]["details"]
                 security_id = state.get("security_id")
                 grant_fmv = state.get("grant_fmv_at_grant", 0.0)
                 vested_lots = state.get("vested_lots", [])
@@ -1182,32 +1731,44 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 if appreciation_rate is None:
                     appreciation_rate = 0.07  # Default 7% equity return
                 
-                # IMPORTANT: Unvested shares should NOT be counted as assets
-                # Only vested shares (after taxes) are counted as assets
-                # The RSU grant itself shows 0 value until vesting occurs
+                # RSU grant value should ONLY include unvested shares
+                # Once shares vest, they become separate assets (tracked in vested_lots but not part of grant value)
+                # Calculate value of unvested shares (appreciate from grant FMV)
+                unvested_shares = state.get("unvested_shares", 0.0)
+                grant_date = rsu_grant.grant_date
+                if grant_date:
+                    grant_year = grant_date.year if isinstance(grant_date, datetime) else grant_date
+                    years_since_grant = sim_year - grant_year
+                else:
+                    # Fallback: assume grant was in base year
+                    years_since_grant = years_from_start
                 
-                # Calculate value of vested lots only (appreciate from vesting FMV)
-                # These represent the net shares received after tax withholding
-                vested_value = 0.0
-                for lot in vested_lots:
-                    vesting_year = lot.get("vesting_year", sim_year)
-                    years_since_vest = sim_year - vesting_year
-                    lot_fmv = lot.get("fmv_on_vest", 0.0)
-                    current_lot_price = lot_fmv * ((1 + appreciation_rate) ** years_since_vest)
-                    net_shares = lot.get("net_shares_received", 0.0)
-                    lot_value = net_shares * current_lot_price
-                    vested_value += lot_value
-                    
-                    # Update lot tracking
-                    lot["current_price"] = current_lot_price
-                    lot["current_value"] = lot_value
+                # Current price per share based on appreciation from grant FMV
+                current_price_per_share = grant_fmv * ((1 + appreciation_rate) ** years_since_grant)
+                unvested_value = unvested_shares * current_price_per_share
                 
-                # RSU grant asset value = only vested shares (net after taxes)
-                # Unvested shares are worth $0 until they vest
-                state["balance"] = vested_value
+                # RSU grant asset value = only unvested shares (at current FMV)
+                # Vested shares are tracked separately and should not be included here
+                state["balance"] = unvested_value
                 
-                asset_values[asset_id].append(vested_value)
-                total_assets += vested_value
+                asset_values[asset_id].append(unvested_value)
+                total_assets += unvested_value
+            
+            elif asset.type == "cash":
+                # Cash assets - no appreciation, just track balance
+                state = asset_states[asset_id]
+                balance = state.get("balance", 0.0)
+                
+                # Cash doesn't appreciate (or can appreciate at 0% if you want to model inflation loss)
+                # For now, cash stays at same nominal value
+                
+                # Apply Explicit Drawdown if any
+                if asset_id in year_drawdown_amounts:
+                    balance -= year_drawdown_amounts[asset_id]
+                    state["balance"] = max(0.0, balance)
+
+                asset_values[asset_id].append(state["balance"])
+                total_assets += state["balance"]
 
             else:
                 # Asset without details - use current balance and scenario bond rate
@@ -1217,6 +1778,58 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
                 state["balance"] *= (1 + scenario.bond_return_rate)
                 asset_values[asset_id].append(state["balance"])
                 total_assets += state["balance"]
+        
+        # Add vested stock holdings to total assets and asset_values
+        # These are shares that vested from RSU grants during the simulation
+        for security_id, holding in vested_stock_holdings.items():
+            shares = holding["shares"]
+            if shares > 0:
+                # Get security to find ticker and appreciation rate
+                security = session.get(Security, security_id)
+                if security:
+                    # Get current price per share (appreciate from basis)
+                    # For simplicity, use the same appreciation rate logic as RSU grants
+                    # Find the appreciation rate (same logic as RSU grant calculation)
+                    appreciation_rate = None
+                    for other_asset_id, other_st in asset_states.items():
+                        if other_st.get("ticker") == security.symbol and other_st.get("appreciation_rate") is not None:
+                            appreciation_rate = other_st.get("appreciation_rate")
+                            break
+                    
+                    if appreciation_rate is None:
+                        appreciation_rate = security.assumed_appreciation_rate if security else 0.07
+                    
+                    # Calculate current value based on weighted average basis, appreciated from first vest year
+                    basis_per_share = holding.get("basis_per_share", 0.0)
+                    first_vest_year = holding.get("first_vest_year", sim_year)
+                    
+                    if basis_per_share > 0:
+                        # Use basis_per_share as the base price at first vest, appreciate to current year
+                        years_since_first_vest = sim_year - first_vest_year
+                        current_price = basis_per_share * ((1 + appreciation_rate) ** years_since_first_vest)
+                    else:
+                        # Fallback: shouldn't happen, but use a default price
+                        current_price = 0.0
+                    
+                    vested_holding_value = shares * current_price
+                    
+                    # Add to total assets
+                    total_assets += vested_holding_value
+                    
+                    # Create synthetic asset entry for vested holdings
+                    # Use a negative ID to distinguish from real assets (or use security_id + offset)
+                    synthetic_asset_id = -security_id  # Negative to avoid conflicts
+                    
+                    # Ensure synthetic asset array exists (should be pre-initialized, but double-check)
+                    if synthetic_asset_id not in asset_values:
+                        asset_values[synthetic_asset_id] = [0.0] * num_years
+                    
+                    # Update value by year index (not append) to ensure alignment with ages
+                    asset_values[synthetic_asset_id][year_index] = vested_holding_value
+                    
+                    # Update holding state for next year's appreciation
+                    holding["current_price"] = current_price
+                    holding["current_value"] = vested_holding_value
         
         # Track specific income
         for source in income_sources_db:
@@ -1266,6 +1879,56 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
         # Portfolio balance = total assets (contributions and spending already applied above)
         current_total_balance = total_assets
         
+        # Capture end-of-year state in debug trace
+        if debug:
+            year_trace["asset_totals"]["total_assets_end"] = total_assets
+            cash_end = sum(
+                asset_states[aid].get("balance", 0.0)
+                for aid, st in asset_states.items()
+                if assets_dict.get(aid) and assets_dict[aid].type == "cash"
+            )
+            year_trace["cash"]["cash_end"] = cash_end
+            
+            # Capture RSU end state and vested holdings
+            for asset_id, st in asset_states.items():
+                if st.get("type") == "rsu_grant" and asset_id in year_trace.get("rsu", {}):
+                    rsu_grant = asset_details.get(asset_id, {}).get("details")
+                    if rsu_grant:
+                        unvested_shares = st.get("unvested_shares", 0.0)
+                        grant_fmv = st.get("grant_fmv_at_grant", 0.0)
+                        grant_date = rsu_grant.grant_date
+                        grant_year = grant_date.year if hasattr(grant_date, 'year') else sim_year
+                        years_since_grant = sim_year - grant_year
+                        security = session.get(Security, st.get("security_id"))
+                        appreciation_rate = security.assumed_appreciation_rate if security else 0.07
+                        current_price = grant_fmv * ((1 + appreciation_rate) ** years_since_grant)
+                        unvested_value_end = unvested_shares * current_price
+                        year_trace["rsu"][asset_id]["unvested_value_end"] = unvested_value_end
+                        year_trace["rsu"][asset_id]["unvested_shares_end"] = unvested_shares
+                        
+                        # Find vested holdings for this security from vested_stock_holdings
+                        security_id = st.get("security_id")
+                        vested_holding_value = 0.0
+                        vested_holding_shares = 0.0
+                        
+                        if security_id in vested_stock_holdings:
+                            holding = vested_stock_holdings[security_id]
+                            shares = holding.get("shares", 0.0)
+                            if shares > 0:
+                                # Calculate current value using same logic as in asset calculation
+                                basis_per_share = holding.get("basis_per_share", 0.0)
+                                first_vest_year = holding.get("first_vest_year", sim_year)
+                                if basis_per_share > 0:
+                                    years_since_first_vest = sim_year - first_vest_year
+                                    current_price = basis_per_share * ((1 + appreciation_rate) ** years_since_first_vest)
+                                    vested_holding_value = shares * current_price
+                                vested_holding_shares = shares
+                        
+                        year_trace["rsu"][asset_id]["vested_holding_value_end"] = vested_holding_value
+                        year_trace["rsu"][asset_id]["vested_holding_shares_end"] = vested_holding_shares
+            
+            debug_trace.append(year_trace)
+        
         contribution_nominal_list.append(contribution_nominal)
         spending_nominal_list.append(spending_nominal)
         balance_nominal.append(current_total_balance)
@@ -1276,6 +1939,17 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     
     # Build asset names list
     asset_names = {asset.id: asset.name for asset in assets}
+    
+    # Add synthetic asset names for vested stock holdings
+    # These are shares that vested from RSU grants during the simulation
+    for security_id in vested_stock_holdings.keys():
+        synthetic_asset_id = -security_id
+        security = session.get(Security, security_id)
+        if security:
+            # Use security symbol/name for the synthetic asset
+            asset_names[synthetic_asset_id] = f"{security.symbol} (Vested)"
+        else:
+            asset_names[synthetic_asset_id] = f"Security {security_id} (Vested)"
     
     # Build debt names (only for real estate with mortgages)
     debt_names = {}
@@ -1288,7 +1962,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
     # Build specific income names
     income_names = {source.id: source.name for source in income_sources_db}
     
-    return {
+    result = {
         "ages": ages,
         "balance_nominal": balance_nominal,
         "balance_real": balance_real,
@@ -1306,6 +1980,12 @@ def run_simple_bond_simulation(session: Session, scenario_id: int) -> Dict:
             "federal_tax": federal_tax_list,
             "state_tax": state_tax_list,
             "total_tax": total_tax_list,
-            "effective_tax_rate": effective_tax_rate_list
+            "effective_tax_rate": effective_tax_rate_list,
+            "tax_shortfall": tax_shortfall_list
         }
     }
+    
+    if debug:
+        result["debug_trace"] = debug_trace
+    
+    return result

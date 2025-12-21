@@ -10,8 +10,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { NumericFormat } from 'react-number-format';
-import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails } from '../api/client';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse } from '../types';
+import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails, getTaxFundingSettings, updateTaxFundingSettings } from '../api/client';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse, TaxFundingSettings, TaxFundingSettingsCreate, TaxFundingSource, InsufficientFundsBehavior } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
 
@@ -97,7 +97,6 @@ interface AssetFormProps {
   rsuGrantDate: string; setRsuGrantDate: (v: string) => void;
   rsuGrantValue: number | ""; setRsuGrantValue: (v: number | "") => void;
   rsuGrantFmv: number | ""; setRsuGrantFmv: (v: number | "") => void;
-  rsuTaxWithholdingRate: number | ""; setRsuTaxWithholdingRate: (v: number | "") => void;
   rsuVestingTranches: Array<{ vesting_date: string; percentage_of_grant: number }>; setRsuVestingTranches: (v: Array<{ vesting_date: string; percentage_of_grant: number }>) => void;
   editingAssetId: number | null;
 }
@@ -161,6 +160,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             label="Type"
             onChange={(e) => setNewAssetType(e.target.value as AssetType)}
           >
+            <MenuItem value="cash">Cash</MenuItem>
             <MenuItem value="general_equity">General Equity</MenuItem>
             <MenuItem value="real_estate">Real Estate</MenuItem>
             <MenuItem value="specific_stock">Specific Stock</MenuItem>
@@ -400,6 +400,21 @@ const AssetForm: React.FC<AssetFormProps> = ({
             </Grid>
           )}
         </>
+      ) : newAssetType === 'cash' ? (
+        // Cash Form
+        <>
+          <Grid item xs={12}>
+            <CurrencyInput
+              label="Cash Balance *"
+              value={geAccountBalance}
+              onChange={setGeAccountBalance}
+              required
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              Cash assets don't appreciate. Use for checking accounts, savings accounts, or cash reserves.
+            </Typography>
+          </Grid>
+        </>
       ) : newAssetType === 'specific_stock' ? (
         // Specific Stock Form
         <>
@@ -571,19 +586,6 @@ const AssetForm: React.FC<AssetFormProps> = ({
               helperText="Fair market value per share on grant date"
             />
           </Grid>
-          <Grid item xs={6}>
-            <TextField
-              fullWidth
-              size="small"
-              type="number"
-              label="Estimated Share Withholding Rate (0.37)"
-              value={rsuTaxWithholdingRate}
-              onChange={(e) => setRsuTaxWithholdingRate(e.target.value === "" ? "" : parseFloat(e.target.value))}
-              inputProps={{ min: 0, max: 1, step: 0.01 }}
-              helperText="Used only to estimate net shares delivered at vesting (shares withheld). Actual taxes are calculated globally. Default 37% (0.37)"
-            />
-          </Grid>
-          
           <Grid item xs={12}>
             <Divider sx={{ my: 1 }}>Vesting Schedule</Divider>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -691,6 +693,12 @@ const ScenarioDetail: React.FC = () => {
   
   // Scenario Edit State
   const [editOpen, setEditOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taxSettings, setTaxSettings] = useState<TaxFundingSettings | null>(null);
+  const [taxFundingOrder, setTaxFundingOrder] = useState<[TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | ""]>(["CASH", "TAXABLE_BROKERAGE", "TRADITIONAL_RETIREMENT", "ROTH"]);
+  const [allowRetirementWithdrawals, setAllowRetirementWithdrawals] = useState(true);
+  const [insufficientFundsBehavior, setInsufficientFundsBehavior] = useState<InsufficientFundsBehavior>("FAIL_WITH_SHORTFALL");
+  
   const [editScenario, setEditScenario] = useState<ScenarioCreate>({
     name: '',
     description: '',
@@ -766,7 +774,6 @@ const ScenarioDetail: React.FC = () => {
   const [rsuGrantDate, setRsuGrantDate] = useState("");
   const [rsuGrantValue, setRsuGrantValue] = useState<number | "">("");
   const [rsuGrantFmv, setRsuGrantFmv] = useState<number | "">("");
-  const [rsuTaxWithholdingRate, setRsuTaxWithholdingRate] = useState<number | "">(0.37);
   const [rsuVestingTranches, setRsuVestingTranches] = useState<Array<{ vesting_date: string; percentage_of_grant: number }>>([]);
   const [securities, setSecurities] = useState<Security[]>([]);
   const [expandedRSUGrants, setExpandedRSUGrants] = useState<Set<number>>(new Set());
@@ -813,7 +820,6 @@ const ScenarioDetail: React.FC = () => {
     setRsuGrantDate("");
     setRsuGrantValue("");
     setRsuGrantFmv("");
-    setRsuTaxWithholdingRate(0.37);
     setRsuVestingTranches([]);
     setEditingAssetId(null);
   };
@@ -923,6 +929,14 @@ const ScenarioDetail: React.FC = () => {
           cost_basis: stockCostBasis === "" ? (Number(stockShares) * Number(stockPrice)) : Number(stockCostBasis),
         }
       };
+    } else if (newAssetType === "cash") {
+      if (geAccountBalance === "" || isNaN(Number(geAccountBalance))) return;
+      
+      payload = {
+        name: newAssetName.trim(),
+        type: "cash",
+        current_balance: Number(geAccountBalance)
+      };
     } else if (newAssetType === "rsu_grant") {
       if (rsuTicker === "" || !rsuSecurityId) return;
       if (rsuGrantDate === "") return;
@@ -992,7 +1006,6 @@ const ScenarioDetail: React.FC = () => {
           grant_value: Number(rsuGrantValue),
           grant_fmv_at_grant: Number(rsuGrantFmv),
           shares_granted: sharesGranted,
-          estimated_share_withholding_rate: rsuTaxWithholdingRate === "" ? 0.37 : Number(rsuTaxWithholdingRate),
           vesting_tranches: rsuVestingTranches.map(t => ({
             vesting_date: formatDateForAPI(t.vesting_date),
             percentage_of_grant: t.percentage_of_grant
@@ -1086,6 +1099,8 @@ const ScenarioDetail: React.FC = () => {
       setStockAppreciation(d.assumed_appreciation_rate || "");
       setStockDividend(d.dividend_yield || "");
       setStockCostBasis((d as any).cost_basis || "");
+    } else if (asset.type === "cash") {
+      setGeAccountBalance(asset.current_balance);
     } else if (asset.type === "rsu_grant" && asset.rsu_grant_details) {
       const d = asset.rsu_grant_details;
       setRsuEmployer(d.employer || "");
@@ -1095,7 +1110,6 @@ const ScenarioDetail: React.FC = () => {
       setRsuGrantDate(d.grant_date ? new Date(d.grant_date).toISOString().split('T')[0] : "");
       setRsuGrantValue(d.grant_value);
       setRsuGrantFmv(d.grant_fmv_at_grant);
-      setRsuTaxWithholdingRate(d.estimated_share_withholding_rate || 0.37);
       setRsuVestingTranches(
         d.vesting_tranches.map(t => ({
           vesting_date: t.vesting_date ? new Date(t.vesting_date).toISOString().split('T')[0] : "",
@@ -1247,6 +1261,65 @@ const ScenarioDetail: React.FC = () => {
     }
   };
 
+  const loadTaxSettings = async () => {
+    try {
+      const settings = await getTaxFundingSettings(scenarioId);
+      setTaxSettings(settings);
+      // Initialize form with loaded settings
+      const order = settings.tax_funding_order;
+      setTaxFundingOrder([
+        order[0] || "",
+        order[1] || "",
+        order[2] || "",
+        order[3] || ""
+      ]);
+      setAllowRetirementWithdrawals(settings.allow_retirement_withdrawals_for_taxes);
+      setInsufficientFundsBehavior(settings.if_insufficient_funds_behavior);
+    } catch (error) {
+      console.error("Error loading tax settings", error);
+    }
+  };
+
+  const handleOpenSettings = () => {
+    loadTaxSettings();
+    setSettingsOpen(true);
+  };
+
+  const handleSaveTaxSettings = async () => {
+    try {
+      // Validate: no duplicates and all 4 positions filled
+      const order = taxFundingOrder.filter(s => s !== "") as TaxFundingSource[];
+      if (order.length !== 4) {
+        alert("Please select all 4 funding sources (no duplicates allowed)");
+        return;
+      }
+      
+      const uniqueOrder = Array.from(new Set(order));
+      if (uniqueOrder.length !== 4) {
+        alert("Duplicate funding sources are not allowed");
+        return;
+      }
+
+      const payload: TaxFundingSettingsCreate = {
+        tax_funding_order: order,
+        allow_retirement_withdrawals_for_taxes: allowRetirementWithdrawals,
+        if_insufficient_funds_behavior: insufficientFundsBehavior
+      };
+
+      await updateTaxFundingSettings(scenarioId, payload);
+      setSettingsOpen(false);
+      setSimulationResult(null); // Clear old simulation results to force re-run
+      alert("Tax funding settings saved successfully!");
+    } catch (error: any) {
+      console.error("Error saving tax settings", error);
+      if (error.response?.data?.detail) {
+        alert(`Error: ${error.response.data.detail}`);
+      } else {
+        alert(`Error saving settings: ${error.message || 'Unknown error'}`);
+      }
+    }
+  };
+
   if (!scenario) return <Typography>Loading...</Typography>;
 
   const assetFormProps = {
@@ -1284,7 +1357,6 @@ const ScenarioDetail: React.FC = () => {
     rsuGrantDate, setRsuGrantDate,
     rsuGrantValue, setRsuGrantValue,
     rsuGrantFmv, setRsuGrantFmv,
-    rsuTaxWithholdingRate, setRsuTaxWithholdingRate,
     rsuVestingTranches, setRsuVestingTranches,
     editingAssetId
   };
@@ -1337,7 +1409,10 @@ const ScenarioDetail: React.FC = () => {
                 </Grid>
               </Grid>
 
-              <Box sx={{ position: 'absolute', bottom: 16, right: 16 }}>
+              <Box sx={{ position: 'absolute', bottom: 16, right: 16, display: 'flex', gap: 1 }}>
+                <Button variant="outlined" size="small" onClick={handleOpenSettings}>
+                  Settings
+                </Button>
                 <Button variant="outlined" size="small" onClick={() => setEditOpen(true)}>
                   Edit
                 </Button>
@@ -1369,7 +1444,9 @@ const ScenarioDetail: React.FC = () => {
                   </TableHead>
                   <TableBody>
                     {assets.map(asset => {
-                      const costBasis = asset.type === 'general_equity' && asset.general_equity_details 
+                      const costBasis = asset.type === 'cash'
+                        ? asset.current_balance  // Cash has no cost basis (it is the basis)
+                        : asset.type === 'general_equity' && asset.general_equity_details 
                         ? (asset.general_equity_details as any).cost_basis 
                         : asset.type === 'specific_stock' && asset.specific_stock_details
                         ? (asset.specific_stock_details as any).cost_basis
@@ -1411,9 +1488,10 @@ const ScenarioDetail: React.FC = () => {
                               {asset.name}
                             </TableCell>
                             <TableCell>
-                              {asset.type === 'real_estate' ? 'Real Estate' : 
-                               asset.type === 'general_equity' ? 'General Equity' : 
-                               asset.type === 'specific_stock' ? 'Specific Stock' : 
+                              {asset.type === 'cash' ? 'Cash' :
+                               asset.type === 'real_estate' ? 'Real Estate' : 
+                               asset.type === 'general_equity' ? 'General Equity' :
+                               asset.type === 'specific_stock' ? 'Specific Stock' :
                                asset.type === 'rsu_grant' ? 'RSU Grant' : asset.type}
                             </TableCell>
                             <TableCell align="right">{formatCurrency(asset.current_balance)}</TableCell>
@@ -1822,6 +1900,79 @@ const ScenarioDetail: React.FC = () => {
         <DialogActions>
           <Button onClick={() => { setAddIncomeSourceOpen(false); resetIncomeForm(); }}>Cancel</Button>
           <Button onClick={handleCreateIncomeSource} variant="contained">{editingIncomeId ? 'Save Changes' : 'Add'}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Settings Dialog */}
+      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Scenario Settings - Tax Funding Policy</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="h6" gutterBottom>
+              Tax Funding Order
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Specify the priority order for funding taxes. The simulation will use these sources in order until taxes are fully paid.
+            </Typography>
+            
+            <Grid container spacing={2}>
+              {[0, 1, 2, 3].map((index) => (
+                <Grid item xs={12} sm={6} key={index}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>{index === 0 ? "1st Priority" : index === 1 ? "2nd Priority" : index === 2 ? "3rd Priority" : "4th Priority"}</InputLabel>
+                    <Select
+                      value={taxFundingOrder[index] || ""}
+                      label={index === 0 ? "1st Priority" : index === 1 ? "2nd Priority" : index === 2 ? "3rd Priority" : "4th Priority"}
+                      onChange={(e) => {
+                        const newOrder: [TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | ""] = [...taxFundingOrder];
+                        newOrder[index] = e.target.value as TaxFundingSource;
+                        setTaxFundingOrder(newOrder);
+                      }}
+                    >
+                      <MenuItem value="CASH">Cash</MenuItem>
+                      <MenuItem value="TAXABLE_BROKERAGE">Taxable Brokerage</MenuItem>
+                      <MenuItem value="TRADITIONAL_RETIREMENT">Traditional Retirement (401k/IRA)</MenuItem>
+                      <MenuItem value="ROTH">Roth Accounts</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              ))}
+            </Grid>
+
+            <Divider sx={{ my: 3 }} />
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={allowRetirementWithdrawals}
+                  onChange={(e) => setAllowRetirementWithdrawals(e.target.checked)}
+                />
+              }
+              label="Allow retirement account withdrawals to pay taxes"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
+              If enabled, traditional retirement accounts can be used to fund taxes (withdrawals are taxable as ordinary income).
+            </Typography>
+
+            <FormControl fullWidth sx={{ mt: 2 }}>
+              <InputLabel>If Insufficient Funds</InputLabel>
+              <Select
+                value={insufficientFundsBehavior}
+                label="If Insufficient Funds"
+                onChange={(e) => setInsufficientFundsBehavior(e.target.value as InsufficientFundsBehavior)}
+              >
+                <MenuItem value="FAIL_WITH_SHORTFALL">Fail with Shortfall</MenuItem>
+                <MenuItem value="LIQUIDATE_ALL_AVAILABLE">Liquidate All Available</MenuItem>
+              </Select>
+            </FormControl>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
+              Behavior when available funds are insufficient to pay all taxes.
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSettingsOpen(false)}>Cancel</Button>
+          <Button onClick={handleSaveTaxSettings} variant="contained">Save</Button>
         </DialogActions>
       </Dialog>
 

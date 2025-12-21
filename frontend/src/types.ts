@@ -1,5 +1,24 @@
 export type FilingStatus = "single" | "married_filing_jointly" | "married_filing_separately" | "head_of_household";
 
+export type TaxFundingSource = "CASH" | "TAXABLE_BROKERAGE" | "TRADITIONAL_RETIREMENT" | "ROTH";
+export type InsufficientFundsBehavior = "FAIL_WITH_SHORTFALL" | "LIQUIDATE_ALL_AVAILABLE";
+
+export interface TaxFundingSettings {
+  id: number;
+  scenario_id: number;
+  tax_funding_order: TaxFundingSource[];
+  allow_retirement_withdrawals_for_taxes: boolean;
+  if_insufficient_funds_behavior: InsufficientFundsBehavior;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaxFundingSettingsCreate {
+  tax_funding_order: TaxFundingSource[];
+  allow_retirement_withdrawals_for_taxes: boolean;
+  if_insufficient_funds_behavior: InsufficientFundsBehavior;
+}
+
 export interface Scenario {
   id: number;
   name: string;
@@ -31,7 +50,7 @@ export interface ScenarioCreate {
   filing_status?: FilingStatus;
 }
 
-export type AssetType = "real_estate" | "general_equity" | "specific_stock" | "rsu_grant";
+export type AssetType = "cash" | "real_estate" | "general_equity" | "specific_stock" | "rsu_grant";
 
 export interface SpecificStockDetailsCreate {
   ticker: string;
@@ -155,7 +174,6 @@ export interface RSUGrantDetailsCreate {
   grant_value: number;
   grant_fmv_at_grant: number; // Fair market value per share at grant
   shares_granted?: number; // Computed: grant_value / grant_fmv_at_grant
-  estimated_share_withholding_rate?: number; // Default 0.37 - used only to estimate net shares delivered at vesting
   vesting_tranches: RSUVestingTrancheCreate[];
 }
 
@@ -169,7 +187,6 @@ export interface RSUGrantDetailsRead {
   grant_value: number;
   grant_fmv_at_grant: number;
   shares_granted: number;
-  tax_withholding_rate: number;
   vesting_tranches: RSUVestingTrancheRead[];
 }
 
@@ -179,7 +196,6 @@ export interface RSUGrantForecastCreate {
   first_grant_date: string; // ISO date string
   grant_frequency?: string; // "annual", "quarterly", etc.
   grant_value: number;
-  tax_withholding_rate?: number;
   vesting_schedule_years?: number; // Default 4
   vesting_cliff_years?: number; // Default 1.0
   vesting_frequency?: string; // "quarterly", "annual", etc.
@@ -205,7 +221,6 @@ export interface RSUGrantDetailsResponse {
     grant_value: number;
     grant_fmv_at_grant: number;
     shares_granted: number;
-    estimated_share_withholding_rate: number; // Used only to estimate net shares delivered at vesting
   };
   vesting_schedule: Array<{
     id: number;

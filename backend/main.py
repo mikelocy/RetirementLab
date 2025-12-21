@@ -4,12 +4,13 @@ from sqlmodel import Session
 from typing import List, Dict, Any, Optional
 
 from .database import init_db, get_session
-from .models import Scenario, Asset, Security, RSUGrantForecast
+from .models import Scenario, Asset, Security, RSUGrantForecast, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior
 # Import all models to ensure they're registered with SQLModel for table creation
 from . import models  # noqa: F401
 from .schemas import (
     ScenarioCreate, ScenarioRead, AssetCreate, AssetRead, IncomeSourceCreate, IncomeSourceRead,
-    SecurityCreate, SecurityRead, RSUGrantForecastCreate, RSUGrantForecastRead
+    SecurityCreate, SecurityRead, RSUGrantForecastCreate, RSUGrantForecastRead,
+    TaxFundingSettingsCreate, TaxFundingSettingsRead
 )
 from . import crud, simulation
 from .export_import import export_scenario, import_scenario
@@ -108,6 +109,110 @@ def delete_scenario(scenario_id: int, session: Session = Depends(get_session)):
         print(f"DEBUG: Error deleting scenario: {e}")
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
+# Tax Funding Settings endpoints
+@app.get("/api/scenarios/{scenario_id}/settings", response_model=TaxFundingSettingsRead)
+def get_tax_funding_settings(scenario_id: int, session: Session = Depends(get_session)):
+    """Get tax funding settings for a scenario. Creates default if not exists."""
+    # Check if scenario exists
+    scenario = session.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    
+    # Get or create settings
+    from sqlmodel import select
+    settings = session.exec(select(TaxFundingSettings).where(TaxFundingSettings.scenario_id == scenario_id)).first()
+    if not settings:
+        # Create default settings
+        import json
+        default_order = [TaxFundingSource.CASH, TaxFundingSource.TAXABLE_BROKERAGE, 
+                        TaxFundingSource.TRADITIONAL_RETIREMENT, TaxFundingSource.ROTH]
+        settings = TaxFundingSettings(
+            scenario_id=scenario_id,
+            tax_funding_order_json=json.dumps([s.value for s in default_order]),
+            allow_retirement_withdrawals_for_taxes=True,
+            if_insufficient_funds_behavior=InsufficientFundsBehavior.FAIL_WITH_SHORTFALL
+        )
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    
+    # Parse JSON and return
+    import json
+    tax_funding_order = [TaxFundingSource(s) for s in json.loads(settings.tax_funding_order_json)]
+    return TaxFundingSettingsRead(
+        id=settings.id,
+        scenario_id=settings.scenario_id,
+        tax_funding_order=tax_funding_order,
+        allow_retirement_withdrawals_for_taxes=settings.allow_retirement_withdrawals_for_taxes,
+        if_insufficient_funds_behavior=settings.if_insufficient_funds_behavior,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at
+    )
+
+@app.put("/api/scenarios/{scenario_id}/settings", response_model=TaxFundingSettingsRead)
+def update_tax_funding_settings(
+    scenario_id: int, 
+    settings_data: TaxFundingSettingsCreate,
+    session: Session = Depends(get_session)
+):
+    """Update tax funding settings for a scenario."""
+    # Check if scenario exists
+    scenario = session.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    
+    # Validate tax_funding_order
+    if not settings_data.tax_funding_order:
+        raise HTTPException(status_code=400, detail="tax_funding_order must contain at least one source")
+    
+    # Check for duplicates
+    if len(settings_data.tax_funding_order) != len(set(settings_data.tax_funding_order)):
+        raise HTTPException(status_code=400, detail="tax_funding_order contains duplicate entries")
+    
+    # Validate all are known enums
+    valid_sources = {TaxFundingSource.CASH, TaxFundingSource.TAXABLE_BROKERAGE, 
+                     TaxFundingSource.TRADITIONAL_RETIREMENT, TaxFundingSource.ROTH}
+    for source in settings_data.tax_funding_order:
+        if source not in valid_sources:
+            raise HTTPException(status_code=400, detail=f"Unknown tax funding source: {source}")
+    
+    # Get or create settings
+    from sqlmodel import select
+    settings = session.exec(select(TaxFundingSettings).where(TaxFundingSettings.scenario_id == scenario_id)).first()
+    import json
+    from datetime import datetime
+    
+    if settings:
+        # Update existing
+        settings.tax_funding_order_json = json.dumps([s.value for s in settings_data.tax_funding_order])
+        settings.allow_retirement_withdrawals_for_taxes = settings_data.allow_retirement_withdrawals_for_taxes
+        settings.if_insufficient_funds_behavior = settings_data.if_insufficient_funds_behavior
+        settings.updated_at = datetime.utcnow()
+    else:
+        # Create new
+        settings = TaxFundingSettings(
+            scenario_id=scenario_id,
+            tax_funding_order_json=json.dumps([s.value for s in settings_data.tax_funding_order]),
+            allow_retirement_withdrawals_for_taxes=settings_data.allow_retirement_withdrawals_for_taxes,
+            if_insufficient_funds_behavior=settings_data.if_insufficient_funds_behavior
+        )
+        session.add(settings)
+    
+    session.commit()
+    session.refresh(settings)
+    
+    # Return updated settings
+    tax_funding_order = [TaxFundingSource(s) for s in json.loads(settings.tax_funding_order_json)]
+    return TaxFundingSettingsRead(
+        id=settings.id,
+        scenario_id=settings.scenario_id,
+        tax_funding_order=tax_funding_order,
+        allow_retirement_withdrawals_for_taxes=settings.allow_retirement_withdrawals_for_taxes,
+        if_insufficient_funds_behavior=settings.if_insufficient_funds_behavior,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at
+    )
+
 @app.get("/api/scenarios/{scenario_id}/assets", response_model=List[AssetRead])
 def read_assets(scenario_id: int, session: Session = Depends(get_session)):
     from sqlmodel import select
@@ -159,7 +264,6 @@ def read_assets(scenario_id: int, session: Session = Depends(get_session)):
                     "grant_value": rsu_grant.grant_value,
                     "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
                     "shares_granted": rsu_grant.shares_granted,
-                    "estimated_share_withholding_rate": rsu_grant.estimated_share_withholding_rate,
                     "vesting_tranches": [RSUVestingTrancheRead.model_validate(t) for t in tranches]
                 }
                 asset_dict["rsu_grant_details"] = RSUGrantDetailsRead(**grant_dict)
@@ -220,7 +324,6 @@ def create_asset(scenario_id: int, asset: AssetCreate, session: Session = Depend
                     "grant_value": rsu_grant.grant_value,
                     "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
                     "shares_granted": rsu_grant.shares_granted,
-                    "estimated_share_withholding_rate": rsu_grant.estimated_share_withholding_rate,
                     "vesting_tranches": [RSUVestingTrancheRead.model_validate(t) for t in tranches]
                 }
                 asset_dict["rsu_grant_details"] = RSUGrantDetailsRead(**grant_dict)
@@ -272,9 +375,9 @@ def delete_income_source(id: int, session: Session = Depends(get_session)):
     return {"status": "deleted", "id": id}
 
 @app.get("/api/scenarios/{scenario_id}/simulate/simple-bond")
-def run_simulation(scenario_id: int, session: Session = Depends(get_session)):
+def run_simulation(scenario_id: int, debug: bool = False, session: Session = Depends(get_session)):
     try:
-        result = simulation.run_simple_bond_simulation(session, scenario_id)
+        result = simulation.run_simple_bond_simulation(session, scenario_id, debug=debug)
         if not result:
             raise HTTPException(status_code=404, detail="Scenario not found or simulation failed")
         return result
@@ -442,8 +545,7 @@ def get_rsu_grant_details(asset_id: int, session: Session = Depends(get_session)
             "grant_date": rsu_grant.grant_date,
             "grant_value": rsu_grant.grant_value,
             "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
-            "shares_granted": rsu_grant.shares_granted,
-            "estimated_share_withholding_rate": rsu_grant.estimated_share_withholding_rate
+            "shares_granted": rsu_grant.shares_granted
         },
         "vesting_schedule": [
             {

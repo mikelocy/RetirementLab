@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from sqlmodel import SQLModel
 
-from .models import TaxWrapper, IncomeType, DepreciationMethod
+from .models import TaxWrapper, IncomeType, DepreciationMethod, TaxFundingSource, InsufficientFundsBehavior
 from .tax_config import FilingStatus
 
 class ScenarioBase(BaseModel):
@@ -145,7 +145,6 @@ class RSUGrantDetailsBase(SQLModel):
     grant_value: float
     grant_fmv_at_grant: float
     shares_granted: float
-    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
 
 class RSUGrantDetailsCreate(SQLModel):
     employer: Optional[str] = None
@@ -155,7 +154,6 @@ class RSUGrantDetailsCreate(SQLModel):
     grant_value: float
     grant_fmv_at_grant: float
     shares_granted: Optional[float] = None  # Optional - will be calculated if not provided
-    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
     vesting_tranches: List[RSUVestingTrancheCreate] = []
 
 class RSUGrantDetailsRead(RSUGrantDetailsBase):
@@ -169,7 +167,6 @@ class RSUGrantForecastBase(SQLModel):
     first_grant_date: datetime
     grant_frequency: str = "annual"
     grant_value: float
-    estimated_share_withholding_rate: float = 0.37  # Used only to estimate net shares delivered at vesting (shares withheld)
     vesting_schedule_years: int = 4
     vesting_cliff_years: float = 1.0
     vesting_frequency: str = "quarterly"
@@ -181,9 +178,25 @@ class RSUGrantForecastRead(RSUGrantForecastBase):
     id: int
     scenario_id: int
 
+# Tax Funding Settings schemas
+class TaxFundingSettingsBase(SQLModel):
+    tax_funding_order: List[TaxFundingSource]  # Array of funding sources in priority order
+    allow_retirement_withdrawals_for_taxes: bool = True
+    if_insufficient_funds_behavior: InsufficientFundsBehavior = InsufficientFundsBehavior.FAIL_WITH_SHORTFALL
+
+class TaxFundingSettingsCreate(TaxFundingSettingsBase):
+    pass
+
+class TaxFundingSettingsRead(TaxFundingSettingsBase):
+    id: int
+    scenario_id: int
+    created_at: datetime
+    updated_at: datetime
+
 class AssetCreate(SQLModel):
     name: str
-    type: str  # "real_estate", "general_equity", "specific_stock", or "rsu_grant"
+    type: str  # "cash", "real_estate", "general_equity", "specific_stock", or "rsu_grant"
+    current_balance: Optional[float] = None  # For cash assets, this is required
     real_estate_details: Optional[RealEstateDetailsCreate] = None
     general_equity_details: Optional[GeneralEquityDetailsCreate] = None
     specific_stock_details: Optional[SpecificStockDetailsCreate] = None

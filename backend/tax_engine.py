@@ -181,6 +181,33 @@ def calculate_taxes(
     state_taxable_income = max(0.0, gross_taxable - state_table.standard_deduction)
     state_tax = apply_brackets(state_taxable_income, state_table)
     
+    # Debug logging for tax calculations (always print to help diagnose issues)
+    import sys
+    def print_flush(*args, **kwargs):
+        print(*args, **kwargs)
+        sys.stdout.flush()
+    print_flush(f"\n[TAX DEBUG] Tax Calculation - Year {year}, Filing Status: {filing_status}")
+    print_flush(f"[TAX DEBUG] Income Breakdown:")
+    print_flush(f"[TAX DEBUG]   Ordinary income (before SS): ${ordinary:,.2f}")
+    print_flush(f"[TAX DEBUG]   Social Security benefits: ${ss_benefits:,.2f}, SS taxable: ${ss_taxable:,.2f}")
+    print_flush(f"[TAX DEBUG]   Ordinary income (with SS): ${ordinary_with_ss:,.2f}")
+    print_flush(f"[TAX DEBUG]   Long-term capital gains: ${ltcg:,.2f}")
+    print_flush(f"[TAX DEBUG]   Qualified dividends: ${qd:,.2f}")
+    print_flush(f"[TAX DEBUG]   Tax-exempt income: ${exempt:,.2f}")
+    print_flush(f"[TAX DEBUG]   Gross taxable income: ${gross_taxable:,.2f}")
+    print_flush(f"\n[TAX DEBUG] Federal Tax Calculation:")
+    print_flush(f"[TAX DEBUG]   Federal standard deduction: ${fed_ord_table.standard_deduction:,.2f}")
+    print_flush(f"[TAX DEBUG]   Taxable ordinary income: ${taxable_ordinary:,.2f}")
+    print_flush(f"[TAX DEBUG]   Federal ordinary tax: ${federal_ordinary_tax:,.2f}")
+    print_flush(f"[TAX DEBUG]   LTCG + QD: ${total_ltcg_like:,.2f}")
+    print_flush(f"[TAX DEBUG]   Federal LTCG tax: ${federal_ltcg_tax:,.2f}")
+    print_flush(f"[TAX DEBUG]   Federal total tax: ${federal_ordinary_tax + federal_ltcg_tax:,.2f}")
+    print_flush(f"\n[TAX DEBUG] State Tax Calculation (CA):")
+    print_flush(f"[TAX DEBUG]   State standard deduction: ${state_table.standard_deduction:,.2f}")
+    print_flush(f"[TAX DEBUG]   State taxable income: ${state_taxable_income:,.2f}")
+    print_flush(f"[TAX DEBUG]   State tax: ${state_tax:,.2f}")
+    print_flush(f"[TAX DEBUG]   Total tax: ${federal_ordinary_tax + federal_ltcg_tax + state_tax:,.2f}")
+    
     # 6. Aggregate Results
     federal_total = federal_ordinary_tax + federal_ltcg_tax
     total_tax = federal_total + state_tax

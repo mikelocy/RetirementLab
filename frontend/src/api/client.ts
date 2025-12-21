@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { 
   Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult, IncomeSource, IncomeSourceCreate,
-  Security, SecurityCreate, RSUGrantForecastCreate, RSUGrantForecastRead, RSUGrantDetailsResponse
+  Security, SecurityCreate, RSUGrantForecastCreate, RSUGrantForecastRead, RSUGrantDetailsResponse,
+  TaxFundingSettings, TaxFundingSettingsCreate
 } from '../types';
 
 const api = axios.create({
@@ -119,5 +120,16 @@ export const deleteRSUForecast = async (forecastId: number): Promise<void> => {
 // RSU Grant Details endpoint
 export const getRSUGrantDetails = async (assetId: number): Promise<RSUGrantDetailsResponse> => {
   const response = await api.get<RSUGrantDetailsResponse>(`/assets/${assetId}/rsu_details`);
+  return response.data;
+};
+
+// Tax Funding Settings endpoints
+export const getTaxFundingSettings = async (scenarioId: number): Promise<TaxFundingSettings> => {
+  const response = await api.get<TaxFundingSettings>(`/scenarios/${scenarioId}/settings`);
+  return response.data;
+};
+
+export const updateTaxFundingSettings = async (scenarioId: number, payload: TaxFundingSettingsCreate): Promise<TaxFundingSettings> => {
+  const response = await api.put<TaxFundingSettings>(`/scenarios/${scenarioId}/settings`, payload);
   return response.data;
 };
