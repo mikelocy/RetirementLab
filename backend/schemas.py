@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from sqlmodel import SQLModel
 
-from .models import TaxWrapper, IncomeType, DepreciationMethod, TaxFundingSource, InsufficientFundsBehavior
+from .models import TaxWrapper, IncomeType, DepreciationMethod, TaxFundingSource, InsufficientFundsBehavior, TaxTableIndexingPolicy
 from .tax_config import FilingStatus
 
 class ScenarioBase(BaseModel):
@@ -112,6 +112,8 @@ class AssetBase(BaseModel):
     name: str
     type: str
     current_balance: float
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 # Security/Ticker schemas
 class SecurityBase(SQLModel):
@@ -183,6 +185,8 @@ class TaxFundingSettingsBase(SQLModel):
     tax_funding_order: List[TaxFundingSource]  # Array of funding sources in priority order
     allow_retirement_withdrawals_for_taxes: bool = True
     if_insufficient_funds_behavior: InsufficientFundsBehavior = InsufficientFundsBehavior.FAIL_WITH_SHORTFALL
+    tax_table_indexing_policy: TaxTableIndexingPolicy = TaxTableIndexingPolicy.CONSTANT_NOMINAL
+    tax_table_custom_index_rate: Optional[float] = None  # Used only when CUSTOM_RATE (as decimal, e.g., 0.03 for 3%)
 
 class TaxFundingSettingsCreate(TaxFundingSettingsBase):
     pass
@@ -193,6 +197,40 @@ class TaxFundingSettingsRead(TaxFundingSettingsBase):
     created_at: datetime
     updated_at: datetime
 
+class TaxBracketSchema(BaseModel):
+    """Schema for a single tax bracket."""
+    up_to: Optional[float] = None  # None represents Infinity (no limit)
+    rate: float
+
+class TaxTableBase(SQLModel):
+    jurisdiction: str  # "FED" or "CA"
+    filing_status: FilingStatus
+    year_base: int
+    brackets: List[TaxBracketSchema]  # List of brackets
+    standard_deduction: float
+    notes: Optional[str] = None
+
+class TaxTableCreate(TaxTableBase):
+    pass
+
+class TaxTableRead(TaxTableBase):
+    id: int
+    scenario_id: int
+    schema_version: str
+    created_at: datetime
+    updated_at: datetime
+
+# Cash Details schemas
+class CashDetailsBase(SQLModel):
+    balance: float = 0.0
+
+class CashDetailsCreate(CashDetailsBase):
+    pass
+
+class CashDetailsRead(CashDetailsBase):
+    id: int
+    asset_id: int
+
 class AssetCreate(SQLModel):
     name: str
     type: str  # "cash", "real_estate", "general_equity", "specific_stock", or "rsu_grant"
@@ -201,6 +239,7 @@ class AssetCreate(SQLModel):
     general_equity_details: Optional[GeneralEquityDetailsCreate] = None
     specific_stock_details: Optional[SpecificStockDetailsCreate] = None
     rsu_grant_details: Optional[RSUGrantDetailsCreate] = None
+    cash_details: Optional[CashDetailsCreate] = None
 
 class AssetRead(AssetBase):
     id: int
@@ -209,3 +248,4 @@ class AssetRead(AssetBase):
     general_equity_details: Optional[GeneralEquityDetailsRead] = None
     specific_stock_details: Optional[SpecificStockDetailsRead] = None
     rsu_grant_details: Optional[RSUGrantDetailsRead] = None
+    cash_details: Optional[CashDetailsRead] = None

@@ -2,6 +2,7 @@ export type FilingStatus = "single" | "married_filing_jointly" | "married_filing
 
 export type TaxFundingSource = "CASH" | "TAXABLE_BROKERAGE" | "TRADITIONAL_RETIREMENT" | "ROTH";
 export type InsufficientFundsBehavior = "FAIL_WITH_SHORTFALL" | "LIQUIDATE_ALL_AVAILABLE";
+export type TaxTableIndexingPolicy = "CONSTANT_NOMINAL" | "SCENARIO_INFLATION" | "CUSTOM_RATE";
 
 export interface TaxFundingSettings {
   id: number;
@@ -9,6 +10,8 @@ export interface TaxFundingSettings {
   tax_funding_order: TaxFundingSource[];
   allow_retirement_withdrawals_for_taxes: boolean;
   if_insufficient_funds_behavior: InsufficientFundsBehavior;
+  tax_table_indexing_policy: TaxTableIndexingPolicy;
+  tax_table_custom_index_rate: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -17,6 +20,36 @@ export interface TaxFundingSettingsCreate {
   tax_funding_order: TaxFundingSource[];
   allow_retirement_withdrawals_for_taxes: boolean;
   if_insufficient_funds_behavior: InsufficientFundsBehavior;
+  tax_table_indexing_policy: TaxTableIndexingPolicy;
+  tax_table_custom_index_rate: number | null;
+}
+
+export interface TaxBracket {
+  up_to: number;
+  rate: number;
+}
+
+export interface TaxTable {
+  id: number;
+  scenario_id: number;
+  jurisdiction: "FED" | "CA";
+  filing_status: FilingStatus;
+  year_base: number;
+  brackets: TaxBracket[];
+  standard_deduction: number;
+  notes: string | null;
+  schema_version: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaxTableCreate {
+  jurisdiction: "FED" | "CA";
+  filing_status: FilingStatus;
+  year_base: number;
+  brackets: TaxBracket[];
+  standard_deduction: number;
+  notes?: string | null;
 }
 
 export interface Scenario {

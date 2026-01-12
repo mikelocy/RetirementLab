@@ -2,6 +2,7 @@ from typing import Optional, List
 from datetime import datetime
 from sqlmodel import Field, SQLModel, Relationship
 from enum import Enum
+import json
 
 class TaxWrapper(str, Enum):
     TAXABLE = "taxable"            # Brokerage account, individual stock account
@@ -15,6 +16,11 @@ class IncomeType(str, Enum):
     TAX_EXEMPT = "tax_exempt"      # Not taxable (e.g., VA disability, some disability insurance)
     DISABILITY = "disability"      # Disability income (may be taxable or exempt depending on source)
 
+class DepreciationMethod(str, Enum):
+    NONE = "none"
+    RESIDENTIAL_27_5 = "residential_27_5"
+    COMMERCIAL_39 = "commercial_39"
+
 class TaxFundingSource(str, Enum):
     CASH = "CASH"
     TAXABLE_BROKERAGE = "TAXABLE_BROKERAGE"
@@ -24,6 +30,11 @@ class TaxFundingSource(str, Enum):
 class InsufficientFundsBehavior(str, Enum):
     FAIL_WITH_SHORTFALL = "FAIL_WITH_SHORTFALL"
     LIQUIDATE_ALL_AVAILABLE = "LIQUIDATE_ALL_AVAILABLE"
+
+class TaxTableIndexingPolicy(str, Enum):
+    CONSTANT_NOMINAL = "CONSTANT_NOMINAL"
+    SCENARIO_INFLATION = "SCENARIO_INFLATION"
+    CUSTOM_RATE = "CUSTOM_RATE"
 
 # Import FilingStatus from tax_config to avoid circular imports
 from .tax_config import FilingStatus
@@ -48,161 +59,145 @@ class Scenario(SQLModel, table=True):
     income_sources: List["IncomeSource"] = Relationship(back_populates="scenario")
     rsu_grant_forecasts: List["RSUGrantForecast"] = Relationship(back_populates="scenario")
     tax_funding_settings: Optional["TaxFundingSettings"] = Relationship(back_populates="scenario", sa_relationship_kwargs={"uselist": False})
-
-class IncomeSource(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    scenario_id: int = Field(foreign_key="scenario.id")
-    name: str
-    amount: float
-    start_age: int
-    end_age: int
-    appreciation_rate: float = 0.0
-    source_type: str = "income" # "income", "drawdown", or "house_sale"
-    linked_asset_id: Optional[int] = None
-    income_type: IncomeType = Field(default=IncomeType.ORDINARY)  # Tax treatment type
-    
-    scenario: Optional[Scenario] = Relationship(back_populates="income_sources")
+    tax_tables: List["TaxTable"] = Relationship(back_populates="scenario", sa_relationship_kwargs={"lazy": "select"})
 
 class Asset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     scenario_id: int = Field(foreign_key="scenario.id")
     name: str
-    type: str
-    current_balance: float
+    type: str  # "general_equity", "specific_stock", "real_estate", "rsu_grant", "cash"
+    current_balance: float = Field(default=0.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    scenario: Scenario = Relationship(back_populates="assets")
-    real_estate_details: Optional["RealEstateDetails"] = Relationship(back_populates="asset")
-    general_equity_details: Optional["GeneralEquityDetails"] = Relationship(back_populates="asset")
-    specific_stock_details: Optional["SpecificStockDetails"] = Relationship(back_populates="asset")
-    rsu_grant_details: Optional["RSUGrantDetails"] = Relationship(back_populates="asset")
-
-class DepreciationMethod(str, Enum):
-    NONE = "none"  # Primary residence, land, etc.
-    RESIDENTIAL_27_5 = "residential_27_5"  # Residential rental property (27.5 years)
-    COMMERCIAL_39 = "commercial_39"  # Commercial property (39 years)
-
-class RealEstateDetails(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    asset_id: int = Field(foreign_key="asset.id")
-    
-    property_type: str = "rental"  # e.g. "primary", "rental", "land"
-    property_value: float  # current market value
-    mortgage_balance: float = 0.0
-    interest_rate: float = 0.0  # as decimal, e.g. 0.04
-    annual_property_tax: float = 0.0
-    annual_insurance: float = 0.0
-    annual_maintenance_pct: float = 0.0  # of property_value
-    annual_rent: float = 0.0  # 0 if not rental
-    appreciation_rate: float = 0.0  # as decimal
-    
-    # Mortgage specifics
-    mortgage_term_years: int = 30
-    mortgage_current_year: int = 1
-    is_interest_only: bool = False
-    
-    # Tax-related fields
-    purchase_price: float = 0.0  # Original acquisition cost
-    land_value: float = 0.0  # Portion of purchase price that's land (not depreciable)
-    depreciation_method: DepreciationMethod = Field(default=DepreciationMethod.NONE)
-    depreciation_start_year: Optional[int] = None  # Year depreciation began (for tracking)
-    accumulated_depreciation: float = 0.0  # Total depreciation taken to date
-    
-    # Primary residence tracking (for capital gains exclusion)
-    primary_residence_start_age: Optional[int] = None  # Age when property became primary residence
-    primary_residence_end_age: Optional[int] = None  # Age when property stopped being primary residence
-    
-    asset: Optional[Asset] = Relationship(back_populates="real_estate_details")
+    scenario: Optional[Scenario] = Relationship(back_populates="assets")
+    general_equity_details: Optional["GeneralEquityDetails"] = Relationship(back_populates="asset", sa_relationship_kwargs={"uselist": False})
+    specific_stock_details: Optional["SpecificStockDetails"] = Relationship(back_populates="asset", sa_relationship_kwargs={"uselist": False})
+    real_estate_details: Optional["RealEstateDetails"] = Relationship(back_populates="asset", sa_relationship_kwargs={"uselist": False})
+    rsu_grant_details: Optional["RSUGrantDetails"] = Relationship(back_populates="asset", sa_relationship_kwargs={"uselist": False})
+    cash_details: Optional["CashDetails"] = Relationship(back_populates="asset", sa_relationship_kwargs={"uselist": False})
 
 class GeneralEquityDetails(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    asset_id: int = Field(foreign_key="asset.id")
-    
-    account_type: str = "taxable"  # e.g. "taxable", "ira", "roth", "401k"
-    account_balance: float  # current balance in this account
-    expected_return_rate: float = 0.0  # as decimal
-    fee_rate: float = 0.0  # as decimal
-    annual_contribution: float = 0.0  # optional, for future use
-    
-    # New Tax Fields
+    asset_id: int = Field(foreign_key="asset.id", unique=True)
+    expected_return_rate: float
+    fee_rate: float = Field(default=0.0)
+    annual_contribution: float = Field(default=0.0)
     tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
-    cost_basis: float = 0.0  # For taxable accounts
-    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
     asset: Optional[Asset] = Relationship(back_populates="general_equity_details")
 
 class SpecificStockDetails(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    asset_id: int = Field(foreign_key="asset.id")
-    
-    ticker: str
+    asset_id: int = Field(foreign_key="asset.id", unique=True)
+    security_id: int = Field(foreign_key="security.id")
     shares_owned: float
-    current_price: float
-    assumed_appreciation_rate: float = 0.0
-    dividend_yield: float = 0.0
-
-    # New Tax Fields
+    average_cost_basis: float
+    appreciation_rate: Optional[float] = None  # Override security's assumed_appreciation_rate if set
     tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
-    cost_basis: float = 0.0  # For taxable accounts
-    
-    # RSU tracking fields
-    source_type: str = "user_entered"  # "user_entered" or "rsu_vest"
-    source_rsu_grant_id: Optional[int] = None  # FK to RSUGrantDetails if from RSU vesting
-    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
     asset: Optional[Asset] = Relationship(back_populates="specific_stock_details")
 
-# Centralized Security/Ticker model for shared stock price/appreciation assumptions
-class Security(SQLModel, table=True):
+class RealEstateDetails(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    symbol: str = Field(unique=True)  # e.g., "KLAC"
-    name: Optional[str] = None  # e.g., "KLA Corporation"
-    assumed_appreciation_rate: float = 0.0  # Expected annual return (e.g., 0.07 = 7%)
-    # This rate is used for RSU grants and can be overridden by SpecificStockDetails if the stock is held directly
-    
-# RSU Grant Details (unvested layer)
+    asset_id: int = Field(foreign_key="asset.id", unique=True)
+    property_value: float
+    mortgage_balance: Optional[float] = None
+    mortgage_term_years: int = Field(default=30)
+    mortgage_current_year: int = Field(default=1)
+    interest_rate: float = Field(default=0.0)
+    is_interest_only: bool = Field(default=False)
+    purchase_price: Optional[float] = None
+    land_value: Optional[float] = None
+    depreciation_method: Optional[str] = None  # DepreciationMethod enum as string
+    depreciation_start_year: Optional[int] = None
+    accumulated_depreciation: Optional[float] = None
+    property_type: str = Field(default="rental")  # "rental" or "primary_residence"
+    primary_residence_start_age: Optional[int] = None
+    primary_residence_end_age: Optional[int] = None
+    appreciation_rate: float = Field(default=0.03)
+    annual_rent: Optional[float] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    asset: Optional[Asset] = Relationship(back_populates="real_estate_details")
+
 class RSUGrantDetails(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    asset_id: int = Field(foreign_key="asset.id")
-    
+    asset_id: int = Field(foreign_key="asset.id", unique=True)
     employer: Optional[str] = None
     security_id: int = Field(foreign_key="security.id")
     grant_date: datetime
-    grant_value_type: str = "dollar_value"  # For now, only support dollar-based grants
-    grant_value: float  # Total dollar value at grant
+    grant_value_type: str  # "dollar_value" or "shares"
+    grant_value: float  # Dollar value if grant_value_type == "dollar_value", else number of shares
     grant_fmv_at_grant: float  # Fair market value per share at grant date
-    shares_granted: float  # Computed: grant_value / grant_fmv_at_grant
-    
-    asset: Optional[Asset] = Relationship(back_populates="rsu_grant_details")
-    security: Optional["Security"] = Relationship()
-    vesting_tranches: List["RSUVestingTranche"] = Relationship(back_populates="grant")
+    shares_granted: float  # Total shares granted (calculated or provided)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-# RSU Vesting Tranche (user-defined vesting schedule)
+    asset: Optional[Asset] = Relationship(back_populates="rsu_grant_details")
+    vesting_tranches: List["RSUVestingTranche"] = Relationship(back_populates="rsu_grant")
+
 class RSUVestingTranche(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    grant_id: int = Field(foreign_key="rsugrantdetails.id")
+    rsu_grant_id: int = Field(foreign_key="rsugrantdetails.id")
     vesting_date: datetime
-    percentage_of_grant: float  # 0-1, e.g., 0.25 for 25%
-    
-    grant: Optional[RSUGrantDetails] = Relationship(back_populates="vesting_tranches")
+    percentage_of_grant: float  # e.g., 0.25 for 25%
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-# RSU Grant Forecast (for future grants)
+    rsu_grant: Optional[RSUGrantDetails] = Relationship(back_populates="vesting_tranches")
+
+class CashDetails(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id", unique=True)
+    balance: float = Field(default=0.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    asset: Optional[Asset] = Relationship(back_populates="cash_details")
+
+class Security(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(unique=True)
+    name: Optional[str] = None
+    assumed_appreciation_rate: float = Field(default=0.07)  # Default 7% annual return
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class IncomeSource(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scenario_id: int = Field(foreign_key="scenario.id")
+    name: str
+    income_type: IncomeType
+    start_age: int
+    end_age: Optional[int] = None
+    annual_amount: float
+    inflation_adjusted: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    scenario: Optional[Scenario] = Relationship(back_populates="income_sources")
+
 class RSUGrantForecast(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     scenario_id: int = Field(foreign_key="scenario.id")
-    
+    employer: Optional[str] = None
     security_id: int = Field(foreign_key="security.id")
-    first_grant_date: datetime
-    grant_frequency: str = "annual"  # "annual", "quarterly", etc.
-    grant_value: float  # Dollar amount per grant
-    
-    # Vesting template - store as JSON or reference to a pattern
-    # For v1, we'll store a simple structure that can be copied to new grants
-    vesting_schedule_years: int = 4  # Default 4-year vest
-    vesting_cliff_years: float = 1.0  # Years until first vest (cliff)
-    vesting_frequency: str = "quarterly"  # After cliff: "quarterly", "annual", etc.
-    
-    scenario: Optional[Scenario] = Relationship()
-    security: Optional["Security"] = Relationship()
+    grant_date: datetime
+    grant_value_type: str  # "dollar_value" or "shares"
+    grant_value: float
+    grant_fmv_at_grant: float
+    shares_granted: float
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-# Tax Funding Settings (1:1 with Scenario)
+    scenario: Optional[Scenario] = Relationship(back_populates="rsu_grant_forecasts")
+
 class TaxFundingSettings(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     scenario_id: int = Field(foreign_key="scenario.id", unique=True)
@@ -214,7 +209,45 @@ class TaxFundingSettings(SQLModel, table=True):
     allow_retirement_withdrawals_for_taxes: bool = Field(default=True)
     if_insufficient_funds_behavior: InsufficientFundsBehavior = Field(default=InsufficientFundsBehavior.FAIL_WITH_SHORTFALL)
     
+    # Tax table indexing policy
+    tax_table_indexing_policy: TaxTableIndexingPolicy = Field(default=TaxTableIndexingPolicy.CONSTANT_NOMINAL)
+    tax_table_custom_index_rate: Optional[float] = Field(default=None)  # Used only when CUSTOM_RATE (as decimal, e.g., 0.03 for 3%)
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     scenario: Optional[Scenario] = Relationship(back_populates="tax_funding_settings")
+
+class TaxTable(SQLModel, table=True):
+    """
+    Stores editable tax tables (brackets and standard deductions) for a scenario.
+    Each record represents one jurisdiction (FED or CA) for one filing status.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scenario_id: int = Field(foreign_key="scenario.id")
+    
+    jurisdiction: str = Field(default="FED")  # "FED" or "CA"
+    filing_status: FilingStatus = Field(default=FilingStatus.MARRIED_FILING_JOINTLY)
+    year_base: int  # Base year the thresholds represent (typically scenario start year)
+    
+    # Store brackets as JSON: [{"up_to": float, "rate": float}, ...]
+    brackets_json: str
+    
+    standard_deduction: float
+    
+    # Metadata
+    schema_version: str = Field(default="1.0")
+    notes: Optional[str] = None
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    scenario: Optional[Scenario] = Relationship(back_populates="tax_tables")
+    
+    def get_brackets(self) -> List[dict]:
+        """Parse brackets_json into a list of dicts."""
+        return json.loads(self.brackets_json)
+    
+    def set_brackets(self, brackets: List[dict]):
+        """Set brackets from a list of dicts."""
+        self.brackets_json = json.dumps(brackets)

@@ -1,7 +1,7 @@
 from typing import Optional
 from sqlmodel import Session, select, delete
 from sqlalchemy.orm import Query
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, Security, RSUGrantDetails, RSUVestingTranche, RSUGrantForecast
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, Security, RSUGrantDetails, RSUVestingTranche, RSUGrantForecast, CashDetails
 from .schemas import ScenarioCreate, AssetCreate, RealEstateDetailsCreate, GeneralEquityDetailsCreate, SpecificStockDetailsCreate, IncomeSourceCreate
 from datetime import datetime
 
@@ -346,7 +346,7 @@ def update_typed_asset(session: Session, asset_id: int, asset_data: AssetCreate)
             
             # Delete existing tranches and recreate
             existing_tranches = session.exec(
-                select(RSUVestingTranche).where(RSUVestingTranche.grant_id == db_asset.rsu_grant_details.id)
+                select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == db_asset.rsu_grant_details.id)
             ).all()
             for tranche in existing_tranches:
                 session.delete(tranche)
@@ -395,7 +395,7 @@ def delete_asset(session: Session, asset_id: int, commit: bool = True):
             select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset_id)
         ).first()
         if rsu_grant:
-            session.exec(delete(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id))
+            session.exec(delete(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id))
             session.exec(delete(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset_id))
         
         session.exec(delete(RealEstateDetails).where(RealEstateDetails.asset_id == asset_id))
@@ -415,23 +415,48 @@ def create_asset(session: Session, asset_create: AssetCreate, scenario_id: int):
     return create_typed_asset(session, scenario_id, asset_create)
 
 def get_assets_for_scenario(session: Session, scenario_id: int):
-    statement = select(Asset).where(Asset.scenario_id == scenario_id)
-    assets = session.exec(statement).all()
+    import traceback
+    print(f"[DEBUG] get_assets_for_scenario: Starting for scenario_id={scenario_id}")
+    try:
+        statement = select(Asset).where(Asset.scenario_id == scenario_id)
+        print(f"[DEBUG] get_assets_for_scenario: Executing query...")
+        assets = session.exec(statement).all()
+        print(f"[DEBUG] get_assets_for_scenario: Retrieved {len(assets)} assets from database")
+    except Exception as e:
+        print(f"[ERROR] get_assets_for_scenario: Error querying assets: {e}")
+        traceback.print_exc()
+        raise
     
     # Eagerly load detail relationships to avoid lazy loading issues during serialization
-    for asset in assets:
-        if asset.type == "real_estate":
-            _ = session.exec(select(RealEstateDetails).where(RealEstateDetails.asset_id == asset.id)).first()
-        elif asset.type == "general_equity":
-            _ = session.exec(select(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset.id)).first()
-        elif asset.type == "specific_stock":
-            _ = session.exec(select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)).first()
-        elif asset.type == "rsu_grant":
-            rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset.id)).first()
-            if rsu_grant:
-                # Also load vesting tranches
-                _ = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)).all()
+    for idx, asset in enumerate(assets):
+        print(f"[DEBUG] get_assets_for_scenario: Eager loading details for asset {idx+1}/{len(assets)}: id={asset.id}, type={asset.type}")
+        try:
+            if asset.type == "real_estate":
+                print(f"[DEBUG] get_assets_for_scenario: Eager loading RealEstateDetails for asset {asset.id}")
+                _ = session.exec(select(RealEstateDetails).where(RealEstateDetails.asset_id == asset.id)).first()
+            elif asset.type == "general_equity":
+                print(f"[DEBUG] get_assets_for_scenario: Eager loading GeneralEquityDetails for asset {asset.id}")
+                _ = session.exec(select(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset.id)).first()
+            elif asset.type == "specific_stock":
+                print(f"[DEBUG] get_assets_for_scenario: Eager loading SpecificStockDetails for asset {asset.id}")
+                _ = session.exec(select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)).first()
+            elif asset.type == "rsu_grant":
+                print(f"[DEBUG] get_assets_for_scenario: Eager loading RSUGrantDetails for asset {asset.id}")
+                rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset.id)).first()
+                if rsu_grant:
+                    print(f"[DEBUG] get_assets_for_scenario: Found RSUGrantDetails id={rsu_grant.id}, eager loading tranches...")
+                    # Also load vesting tranches
+                    _ = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id)).all()
+            elif asset.type == "cash":
+                print(f"[DEBUG] get_assets_for_scenario: Eager loading CashDetails for asset {asset.id}")
+                _ = session.exec(select(CashDetails).where(CashDetails.asset_id == asset.id)).first()
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] get_assets_for_scenario: Error eager loading details for asset {asset.id} (type: {asset.type}): {e}")
+            traceback.print_exc()
+            raise
     
+    print(f"[DEBUG] get_assets_for_scenario: Successfully eager loaded all details, returning {len(assets)} assets")
     return assets
 
 # Security CRUD helpers

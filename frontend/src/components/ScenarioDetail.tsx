@@ -10,10 +10,11 @@ import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { NumericFormat } from 'react-number-format';
-import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails, getTaxFundingSettings, updateTaxFundingSettings } from '../api/client';
-import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse, TaxFundingSettings, TaxFundingSettingsCreate, TaxFundingSource, InsufficientFundsBehavior } from '../types';
+import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails } from '../api/client';
+import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse } from '../types';
 import SimulationChart from './SimulationChart';
 import SimulationTable from './SimulationTable';
+import SettingsMenu from './SettingsMenu';
 
 // Helper function to format currency for display
 const formatCurrency = (value: number) => {
@@ -1261,63 +1262,8 @@ const ScenarioDetail: React.FC = () => {
     }
   };
 
-  const loadTaxSettings = async () => {
-    try {
-      const settings = await getTaxFundingSettings(scenarioId);
-      setTaxSettings(settings);
-      // Initialize form with loaded settings
-      const order = settings.tax_funding_order;
-      setTaxFundingOrder([
-        order[0] || "",
-        order[1] || "",
-        order[2] || "",
-        order[3] || ""
-      ]);
-      setAllowRetirementWithdrawals(settings.allow_retirement_withdrawals_for_taxes);
-      setInsufficientFundsBehavior(settings.if_insufficient_funds_behavior);
-    } catch (error) {
-      console.error("Error loading tax settings", error);
-    }
-  };
-
   const handleOpenSettings = () => {
-    loadTaxSettings();
     setSettingsOpen(true);
-  };
-
-  const handleSaveTaxSettings = async () => {
-    try {
-      // Validate: no duplicates and all 4 positions filled
-      const order = taxFundingOrder.filter(s => s !== "") as TaxFundingSource[];
-      if (order.length !== 4) {
-        alert("Please select all 4 funding sources (no duplicates allowed)");
-        return;
-      }
-      
-      const uniqueOrder = Array.from(new Set(order));
-      if (uniqueOrder.length !== 4) {
-        alert("Duplicate funding sources are not allowed");
-        return;
-      }
-
-      const payload: TaxFundingSettingsCreate = {
-        tax_funding_order: order,
-        allow_retirement_withdrawals_for_taxes: allowRetirementWithdrawals,
-        if_insufficient_funds_behavior: insufficientFundsBehavior
-      };
-
-      await updateTaxFundingSettings(scenarioId, payload);
-      setSettingsOpen(false);
-      setSimulationResult(null); // Clear old simulation results to force re-run
-      alert("Tax funding settings saved successfully!");
-    } catch (error: any) {
-      console.error("Error saving tax settings", error);
-      if (error.response?.data?.detail) {
-        alert(`Error: ${error.response.data.detail}`);
-      } else {
-        alert(`Error saving settings: ${error.message || 'Unknown error'}`);
-      }
-    }
   };
 
   if (!scenario) return <Typography>Loading...</Typography>;
@@ -1903,78 +1849,14 @@ const ScenarioDetail: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Settings Dialog */}
-      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Scenario Settings - Tax Funding Policy</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Tax Funding Order
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Specify the priority order for funding taxes. The simulation will use these sources in order until taxes are fully paid.
-            </Typography>
-            
-            <Grid container spacing={2}>
-              {[0, 1, 2, 3].map((index) => (
-                <Grid item xs={12} sm={6} key={index}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>{index === 0 ? "1st Priority" : index === 1 ? "2nd Priority" : index === 2 ? "3rd Priority" : "4th Priority"}</InputLabel>
-                    <Select
-                      value={taxFundingOrder[index] || ""}
-                      label={index === 0 ? "1st Priority" : index === 1 ? "2nd Priority" : index === 2 ? "3rd Priority" : "4th Priority"}
-                      onChange={(e) => {
-                        const newOrder: [TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | "", TaxFundingSource | ""] = [...taxFundingOrder];
-                        newOrder[index] = e.target.value as TaxFundingSource;
-                        setTaxFundingOrder(newOrder);
-                      }}
-                    >
-                      <MenuItem value="CASH">Cash</MenuItem>
-                      <MenuItem value="TAXABLE_BROKERAGE">Taxable Brokerage</MenuItem>
-                      <MenuItem value="TRADITIONAL_RETIREMENT">Traditional Retirement (401k/IRA)</MenuItem>
-                      <MenuItem value="ROTH">Roth Accounts</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-              ))}
-            </Grid>
-
-            <Divider sx={{ my: 3 }} />
-
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={allowRetirementWithdrawals}
-                  onChange={(e) => setAllowRetirementWithdrawals(e.target.checked)}
-                />
-              }
-              label="Allow retirement account withdrawals to pay taxes"
-            />
-            <Typography variant="body2" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
-              If enabled, traditional retirement accounts can be used to fund taxes (withdrawals are taxable as ordinary income).
-            </Typography>
-
-            <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>If Insufficient Funds</InputLabel>
-              <Select
-                value={insufficientFundsBehavior}
-                label="If Insufficient Funds"
-                onChange={(e) => setInsufficientFundsBehavior(e.target.value as InsufficientFundsBehavior)}
-              >
-                <MenuItem value="FAIL_WITH_SHORTFALL">Fail with Shortfall</MenuItem>
-                <MenuItem value="LIQUIDATE_ALL_AVAILABLE">Liquidate All Available</MenuItem>
-              </Select>
-            </FormControl>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
-              Behavior when available funds are insufficient to pay all taxes.
-            </Typography>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSettingsOpen(false)}>Cancel</Button>
-          <Button onClick={handleSaveTaxSettings} variant="contained">Save</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Settings Menu */}
+      {scenarioId && (
+        <SettingsMenu 
+          open={settingsOpen} 
+          onClose={() => setSettingsOpen(false)} 
+          scenarioId={scenarioId}
+        />
+      )}
 
     </Box>
   );

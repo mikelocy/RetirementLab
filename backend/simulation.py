@@ -2,10 +2,10 @@ from typing import Dict, List, Tuple, Optional
 import sys
 from datetime import datetime
 from sqlmodel import Session, select
-from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, DepreciationMethod, Security, RSUGrantDetails, RSUVestingTranche, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior
+from .models import Scenario, Asset, RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, IncomeSource, TaxWrapper, IncomeType, DepreciationMethod, Security, RSUGrantDetails, RSUVestingTranche, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior, TaxTable
 from .crud import get_assets_for_scenario, get_income_sources_for_scenario, get_security, get_security_by_symbol
 from .tax_engine import TaxableIncomeBreakdown, calculate_taxes, TaxResult
-from .tax_config import FilingStatus
+from .tax_config import FilingStatus, TaxTable as TaxTableConfig, TaxBracket
 import json
 
 # Helper function to print and flush immediately
@@ -479,10 +479,40 @@ def run_simple_bond_simulation(session: Session, scenario_id: int, debug: bool =
         tax_funding_order = default_order
         allow_retirement_withdrawals = True
         if_insufficient_funds_behavior = InsufficientFundsBehavior.FAIL_WITH_SHORTFALL
+        indexing_policy = "CONSTANT_NOMINAL"
+        custom_index_rate = None
     else:
         tax_funding_order = [TaxFundingSource(s) for s in json.loads(tax_settings.tax_funding_order_json)]
         allow_retirement_withdrawals = tax_settings.allow_retirement_withdrawals_for_taxes
         if_insufficient_funds_behavior = tax_settings.if_insufficient_funds_behavior
+        indexing_policy = tax_settings.tax_table_indexing_policy.value
+        custom_index_rate = tax_settings.tax_table_custom_index_rate
+    
+    # Load custom tax tables if they exist
+    custom_fed_table = None
+    custom_state_table = None
+    tax_table_year_base = None
+    
+    tax_tables = session.exec(
+        select(TaxTable).where(TaxTable.scenario_id == scenario_id)
+    ).all()
+    
+    for table in tax_tables:
+        # Convert database table to TaxTableConfig
+        brackets = table.get_brackets()
+        tax_brackets = [TaxBracket(up_to=b["up_to"], rate=b["rate"]) for b in brackets]
+        tax_table_config = TaxTableConfig(
+            brackets=tax_brackets,
+            standard_deduction=table.standard_deduction
+        )
+        
+        if table.jurisdiction == "FED" and table.filing_status == scenario.filing_status:
+            custom_fed_table = tax_table_config
+            tax_table_year_base = table.year_base
+        elif table.jurisdiction == "CA" and table.filing_status == scenario.filing_status:
+            custom_state_table = tax_table_config
+            if tax_table_year_base is None:
+                tax_table_year_base = table.year_base
     
     # Load detail records for each asset
     asset_details = {}
@@ -512,7 +542,7 @@ def run_simple_bond_simulation(session: Session, scenario_id: int, debug: bool =
             if rsu_grant:
                 # Load vesting tranches
                 tranches = session.exec(
-                    select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)
+                    select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id)
                     .order_by(RSUVestingTranche.vesting_date)
                 ).all()
                 asset_details[asset.id] = {"type": "rsu_grant", "details": rsu_grant, "tranches": tranches}
@@ -1392,7 +1422,13 @@ def run_simple_bond_simulation(session: Session, scenario_id: int, debug: bool =
             year=sim_year,
             filing_status=scenario.filing_status,
             state="CA",
-            breakdown=tax_breakdown
+            breakdown=tax_breakdown,
+            custom_fed_table=custom_fed_table,
+            custom_state_table=custom_state_table,
+            indexing_policy=indexing_policy if custom_fed_table or custom_state_table else None,
+            year_base=tax_table_year_base,
+            scenario_inflation_rate=scenario.inflation_rate,
+            custom_index_rate=custom_index_rate
         )
         
         # Calculate Net After-Tax Income

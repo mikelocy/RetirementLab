@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel
-from .tax_config import FilingStatus, get_federal_ordinary_tax_table, get_federal_ltcg_tax_table, get_state_tax_table, TaxTable
+from .tax_config import FilingStatus, get_federal_ordinary_tax_table, get_federal_ltcg_tax_table, get_state_tax_table, TaxTable, apply_tax_table_indexing
 
 class TaxableIncomeBreakdown(BaseModel):
     ordinary_income: float = 0.0           # wages, pensions, IRA withdrawals, STCG, rental net, etc.
@@ -43,7 +43,7 @@ def apply_brackets(taxable_income: float, table: TaxTable) -> float:
             # (taxable_income - previous_up_to) -> partial bracket filled
             
             # Handle infinity for top bracket
-            if bracket.up_to == float("inf"):
+            if bracket.up_to == None:
                 income_in_bracket = taxable_income - previous_up_to
             else:
                 income_in_bracket = min(bracket.up_to, taxable_income) - previous_up_to
@@ -133,6 +133,12 @@ def calculate_taxes(
     filing_status: FilingStatus,
     state: str,
     breakdown: TaxableIncomeBreakdown,
+    custom_fed_table: Optional[TaxTable] = None,
+    custom_state_table: Optional[TaxTable] = None,
+    indexing_policy: Optional[str] = None,
+    year_base: Optional[int] = None,
+    scenario_inflation_rate: Optional[float] = None,
+    custom_index_rate: Optional[float] = None,
 ) -> TaxResult:
     """
     Calculate estimated taxes based on income breakdown.
@@ -160,7 +166,22 @@ def calculate_taxes(
     gross_with_exempt = gross_taxable + exempt + (ss_benefits - ss_taxable)  # Include non-taxable SS
     
     # 3. Federal Ordinary Income Tax
-    fed_ord_table = get_federal_ordinary_tax_table(year, filing_status)
+    if custom_fed_table and indexing_policy and year_base is not None:
+        # Use custom table with indexing
+        fed_ord_table = apply_tax_table_indexing(
+            custom_fed_table,
+            year_base,
+            year,
+            indexing_policy,
+            scenario_inflation_rate,
+            custom_index_rate
+        )
+    elif custom_fed_table:
+        # Use custom table without indexing (assume it's already for the target year)
+        fed_ord_table = custom_fed_table
+    else:
+        # Use default hardcoded table
+        fed_ord_table = get_federal_ordinary_tax_table(year, filing_status)
     
     # Apply standard deduction to ordinary income (including taxable SS)
     taxable_ordinary = max(0.0, ordinary_with_ss - fed_ord_table.standard_deduction)
@@ -168,6 +189,7 @@ def calculate_taxes(
     federal_ordinary_tax = apply_brackets(taxable_ordinary, fed_ord_table)
     
     # 4. Federal LTCG / Qualified Dividends Tax
+    # For now, LTCG uses default table (custom tables for LTCG not yet supported)
     fed_ltcg_table = get_federal_ltcg_tax_table(year, filing_status)
     
     # Simplification: Treating LTCG as separate stack (ignoring ordinary income base) for V1
@@ -175,7 +197,22 @@ def calculate_taxes(
     
     # 5. State Tax (CA)
     # CA treats Capital Gains as Ordinary Income
-    state_table = get_state_tax_table(state, year, filing_status)
+    if custom_state_table and indexing_policy and year_base is not None:
+        # Use custom table with indexing
+        state_table = apply_tax_table_indexing(
+            custom_state_table,
+            year_base,
+            year,
+            indexing_policy,
+            scenario_inflation_rate,
+            custom_index_rate
+        )
+    elif custom_state_table:
+        # Use custom table without indexing
+        state_table = custom_state_table
+    else:
+        # Use default hardcoded table
+        state_table = get_state_tax_table(state, year, filing_status)
     
     # CA allows standard deduction against total income
     state_taxable_income = max(0.0, gross_taxable - state_table.standard_deduction)

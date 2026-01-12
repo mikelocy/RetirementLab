@@ -4,13 +4,14 @@ from sqlmodel import Session
 from typing import List, Dict, Any, Optional
 
 from .database import init_db, get_session
-from .models import Scenario, Asset, Security, RSUGrantForecast, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior
+from .models import Scenario, Asset, Security, RSUGrantForecast, TaxFundingSettings, TaxFundingSource, InsufficientFundsBehavior, TaxTable, TaxTableIndexingPolicy
+from .tax_config import FilingStatus, get_federal_ordinary_tax_table, get_state_tax_table
 # Import all models to ensure they're registered with SQLModel for table creation
 from . import models  # noqa: F401
 from .schemas import (
     ScenarioCreate, ScenarioRead, AssetCreate, AssetRead, IncomeSourceCreate, IncomeSourceRead,
     SecurityCreate, SecurityRead, RSUGrantForecastCreate, RSUGrantForecastRead,
-    TaxFundingSettingsCreate, TaxFundingSettingsRead
+    TaxFundingSettingsCreate, TaxFundingSettingsRead, TaxTableCreate, TaxTableRead
 )
 from . import crud, simulation
 from .export_import import export_scenario, import_scenario
@@ -182,11 +183,23 @@ def update_tax_funding_settings(
     import json
     from datetime import datetime
     
+    # Validate indexing policy
+    if settings_data.tax_table_indexing_policy == TaxTableIndexingPolicy.CUSTOM_RATE:
+        if settings_data.tax_table_custom_index_rate is None:
+            raise HTTPException(status_code=400, detail="tax_table_custom_index_rate is required when policy is CUSTOM_RATE")
+        if not (-0.05 <= settings_data.tax_table_custom_index_rate <= 0.15):
+            raise HTTPException(status_code=400, detail="tax_table_custom_index_rate must be between -5% and 15%")
+    elif settings_data.tax_table_custom_index_rate is not None:
+        # Clear custom rate if not using CUSTOM_RATE policy
+        settings_data.tax_table_custom_index_rate = None
+    
     if settings:
         # Update existing
         settings.tax_funding_order_json = json.dumps([s.value for s in settings_data.tax_funding_order])
         settings.allow_retirement_withdrawals_for_taxes = settings_data.allow_retirement_withdrawals_for_taxes
         settings.if_insufficient_funds_behavior = settings_data.if_insufficient_funds_behavior
+        settings.tax_table_indexing_policy = settings_data.tax_table_indexing_policy
+        settings.tax_table_custom_index_rate = settings_data.tax_table_custom_index_rate
         settings.updated_at = datetime.utcnow()
     else:
         # Create new
@@ -194,7 +207,9 @@ def update_tax_funding_settings(
             scenario_id=scenario_id,
             tax_funding_order_json=json.dumps([s.value for s in settings_data.tax_funding_order]),
             allow_retirement_withdrawals_for_taxes=settings_data.allow_retirement_withdrawals_for_taxes,
-            if_insufficient_funds_behavior=settings_data.if_insufficient_funds_behavior
+            if_insufficient_funds_behavior=settings_data.if_insufficient_funds_behavior,
+            tax_table_indexing_policy=settings_data.tax_table_indexing_policy,
+            tax_table_custom_index_rate=settings_data.tax_table_custom_index_rate
         )
         session.add(settings)
     
@@ -209,21 +224,249 @@ def update_tax_funding_settings(
         tax_funding_order=tax_funding_order,
         allow_retirement_withdrawals_for_taxes=settings.allow_retirement_withdrawals_for_taxes,
         if_insufficient_funds_behavior=settings.if_insufficient_funds_behavior,
+        tax_table_indexing_policy=settings.tax_table_indexing_policy,
+        tax_table_custom_index_rate=settings.tax_table_custom_index_rate,
         created_at=settings.created_at,
         updated_at=settings.updated_at
     )
 
+def _seed_default_tax_tables(session: Session, scenario: Scenario):
+    """
+    Seed default tax tables for a scenario if they don't exist.
+    Uses scenario's base_year (falling back to latest available) for the scenario's filing status.
+    """
+    from sqlmodel import select
+    from datetime import datetime
+    import json
+    import traceback
+    
+    try:
+        # Check if tables already exist
+        existing = session.exec(
+            select(TaxTable).where(TaxTable.scenario_id == scenario.id)
+        ).all()
+        
+        if existing:
+            # Tables already exist, don't seed
+            return
+        
+        # Determine base year (use scenario's base_year or current year)
+        base_year = scenario.base_year if scenario.base_year else datetime.utcnow().year
+        
+        # We will try to fetch tables for base_year.
+        # The helpers in tax_config handle fallback to the latest available year if base_year is missing.
+        
+        # Get default tables from tax_config
+        # scenario.filing_status is already a FilingStatus enum (from models)
+        try:
+            fed_table = get_federal_ordinary_tax_table(base_year, scenario.filing_status)
+            ca_table = get_state_tax_table("CA", base_year, scenario.filing_status)
+        except (ValueError, NotImplementedError) as e:
+            # If tables don't exist for this filing status/year, skip seeding
+            print(f"[WARN] Could not seed default tax tables: {e}")
+            return
+        
+        # Create federal table
+        brackets_fed = [{"up_to": b.up_to, "rate": b.rate} for b in fed_table.brackets]
+        fed_tax_table = TaxTable(
+            scenario_id=scenario.id,
+            jurisdiction="FED",
+            filing_status=scenario.filing_status,
+            year_base=base_year,
+            brackets_json=json.dumps(brackets_fed),
+            standard_deduction=fed_table.standard_deduction,
+            notes=f"Default seeded for {base_year} (using available configuration)"
+        )
+        session.add(fed_tax_table)
+        
+        # Create CA table
+        brackets_ca = [{"up_to": b.up_to, "rate": b.rate} for b in ca_table.brackets]
+        ca_tax_table = TaxTable(
+            scenario_id=scenario.id,
+            jurisdiction="CA",
+            filing_status=scenario.filing_status,
+            year_base=base_year,
+            brackets_json=json.dumps(brackets_ca),
+            standard_deduction=ca_table.standard_deduction,
+            notes=f"Default seeded for {base_year} (using available configuration)"
+        )
+        session.add(ca_tax_table)
+        
+        session.commit()
+        print(f"[DEBUG] Seeded default tax tables for scenario {scenario.id} (filing_status={scenario.filing_status}, base_year={base_year})")
+        
+    except Exception as e:
+        print(f"[ERROR] Error in _seed_default_tax_tables: {e}")
+        traceback.print_exc()
+        # Do not raise, just log and return. This ensures GET /tax-tables doesn't 500.
+
+
+@app.get("/api/scenarios/{scenario_id}/tax-tables", response_model=List[TaxTableRead])
+def get_tax_tables(scenario_id: int, session: Session = Depends(get_session)):
+    """Get all tax tables for a scenario. Seeds default tables if none exist."""
+    try:
+        scenario = session.get(Scenario, scenario_id)
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        
+        from sqlmodel import select
+        
+        # Seed default tables if none exist
+        _seed_default_tax_tables(session, scenario)
+        
+        tax_tables = session.exec(select(TaxTable).where(TaxTable.scenario_id == scenario_id)).all()
+        print("[DEBUG] brackets_json from DB:", [t.brackets_json for t in tax_tables])
+
+        print(f"[DEBUG] get_tax_tables: Found {len(tax_tables)} tax tables for scenario {scenario_id}")
+        
+        result = []
+        for table in tax_tables:
+            brackets = table.get_brackets()
+            print("[DEBUG] raw brackets:", brackets)
+            print("[DEBUG] table.id:", table.id)
+            print("[DEBUG] raw brackets_json:", table.brackets_json)
+
+            result.append(TaxTableRead(
+                id=table.id,
+                scenario_id=table.scenario_id,
+                jurisdiction=table.jurisdiction,
+                filing_status=table.filing_status,
+                year_base=table.year_base,
+                brackets=[
+                    {
+                        "up_to": None if b["up_to"] == None else b["up_to"],
+                        "rate": b["rate"]
+                    }
+                    for b in brackets
+                ],
+                standard_deduction=table.standard_deduction,
+                notes=table.notes,
+                schema_version=table.schema_version,
+                created_at=table.created_at,
+                updated_at=table.updated_at
+            ))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] get_tax_tables failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving tax tables: {str(e)}")
+
+
+@app.put("/api/scenarios/{scenario_id}/tax-tables/{jurisdiction}", response_model=TaxTableRead)
+def upsert_tax_table(
+    scenario_id: int,
+    jurisdiction: str,
+    table_data: TaxTableCreate,
+    session: Session = Depends(get_session)
+):
+    """Create or update a tax table for a scenario."""
+    if jurisdiction not in ("FED", "CA"):
+        raise HTTPException(status_code=400, detail="jurisdiction must be 'FED' or 'CA'")
+    
+    scenario = session.get(Scenario, scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    
+    # Validate brackets
+    if not table_data.brackets:
+        raise HTTPException(status_code=400, detail="brackets must contain at least one bracket")
+    
+    # Validate bracket thresholds are ascending
+    prev_up_to = -1
+    for bracket in table_data.brackets:
+        if bracket.up_to <= prev_up_to:
+            raise HTTPException(status_code=400, detail="Bracket thresholds must be in ascending order")
+        if not (0 <= bracket.rate <= 1):
+            raise HTTPException(status_code=400, detail="Bracket rates must be between 0 and 1")
+        prev_up_to = bracket.up_to
+    
+    # Validate standard deduction
+    if table_data.standard_deduction < 0:
+        raise HTTPException(status_code=400, detail="standard_deduction must be non-negative")
+    
+    # Ensure jurisdiction matches
+    if table_data.jurisdiction != jurisdiction:
+        raise HTTPException(status_code=400, detail="jurisdiction in URL must match jurisdiction in body")
+    
+    from sqlmodel import select
+    from datetime import datetime
+    import json
+    
+    # Find existing table
+    existing = session.exec(
+        select(TaxTable).where(
+            TaxTable.scenario_id == scenario_id,
+            TaxTable.jurisdiction == jurisdiction,
+            TaxTable.filing_status == table_data.filing_status
+        )
+    ).first()
+    
+    brackets_dict = [{"up_to": b.up_to, "rate": b.rate} for b in table_data.brackets]
+    
+    if existing:
+        # Update existing
+        existing.set_brackets(brackets_dict)
+        existing.standard_deduction = table_data.standard_deduction
+        existing.year_base = table_data.year_base
+        existing.notes = table_data.notes
+        existing.updated_at = datetime.utcnow()
+        tax_table = existing
+    else:
+        # Create new
+        tax_table = TaxTable(
+            scenario_id=scenario_id,
+            jurisdiction=jurisdiction,
+            filing_status=table_data.filing_status,
+            year_base=table_data.year_base,
+            brackets_json=json.dumps(brackets_dict),
+            standard_deduction=table_data.standard_deduction,
+            notes=table_data.notes
+        )
+        session.add(tax_table)
+    
+    session.commit()
+    session.refresh(tax_table)
+    
+    return TaxTableRead(
+        id=tax_table.id,
+        scenario_id=tax_table.scenario_id,
+        jurisdiction=tax_table.jurisdiction,
+        filing_status=tax_table.filing_status,
+        year_base=tax_table.year_base,
+        brackets=brackets_dict,
+        standard_deduction=tax_table.standard_deduction,
+        notes=tax_table.notes,
+        schema_version=tax_table.schema_version,
+        created_at=tax_table.created_at,
+        updated_at=tax_table.updated_at
+    )
+
 @app.get("/api/scenarios/{scenario_id}/assets", response_model=List[AssetRead])
 def read_assets(scenario_id: int, session: Session = Depends(get_session)):
+    import traceback
     from sqlmodel import select
-    from .models import RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, RSUGrantDetails, RSUVestingTranche
-    from .schemas import RealEstateDetailsRead, GeneralEquityDetailsRead, SpecificStockDetailsRead, RSUGrantDetailsRead, RSUVestingTrancheRead
+    from .models import RealEstateDetails, GeneralEquityDetails, SpecificStockDetails, RSUGrantDetails, RSUVestingTranche, CashDetails
+    from .schemas import RealEstateDetailsRead, GeneralEquityDetailsRead, SpecificStockDetailsRead, RSUGrantDetailsRead, RSUVestingTrancheRead, CashDetailsRead
     
-    assets = crud.get_assets_for_scenario(session, scenario_id)
+    print(f"[DEBUG] read_assets: Starting for scenario_id={scenario_id}")
+    
+    try:
+        print(f"[DEBUG] read_assets: Calling get_assets_for_scenario...")
+        assets = crud.get_assets_for_scenario(session, scenario_id)
+        print(f"[DEBUG] read_assets: Retrieved {len(assets)} assets")
+    except Exception as e:
+        print(f"[ERROR] read_assets: Error in get_assets_for_scenario: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error loading assets: {str(e)}")
     
     # Manually construct AssetRead objects to ensure relationships are properly serialized
     result = []
-    for asset in assets:
+    for idx, asset in enumerate(assets):
+        print(f"[DEBUG] read_assets: Processing asset {idx+1}/{len(assets)}: id={asset.id}, type={asset.type}, name={asset.name}")
         asset_dict = {
             "id": asset.id,
             "scenario_id": asset.scenario_id,
@@ -233,43 +476,84 @@ def read_assets(scenario_id: int, session: Session = Depends(get_session)):
             "real_estate_details": None,
             "general_equity_details": None,
             "specific_stock_details": None,
-            "rsu_grant_details": None
+            "rsu_grant_details": None,
+            "cash_details": None
         }
         
-        if asset.type == "real_estate":
-            re_detail = session.exec(select(RealEstateDetails).where(RealEstateDetails.asset_id == asset.id)).first()
-            if re_detail:
-                asset_dict["real_estate_details"] = RealEstateDetailsRead.model_validate(re_detail)
-        elif asset.type == "general_equity":
-            ge_detail = session.exec(select(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset.id)).first()
-            if ge_detail:
-                asset_dict["general_equity_details"] = GeneralEquityDetailsRead.model_validate(ge_detail)
-        elif asset.type == "specific_stock":
-            stock_detail = session.exec(select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)).first()
-            if stock_detail:
-                asset_dict["specific_stock_details"] = SpecificStockDetailsRead.model_validate(stock_detail)
-        elif asset.type == "rsu_grant":
-            rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset.id)).first()
-            if rsu_grant:
-                # Load vesting tranches
-                tranches = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)).all()
-                # Create RSUGrantDetailsRead with tranches
-                grant_dict = {
-                    "id": rsu_grant.id,
-                    "asset_id": rsu_grant.asset_id,
-                    "employer": rsu_grant.employer,
-                    "security_id": rsu_grant.security_id,
-                    "grant_date": rsu_grant.grant_date,
-                    "grant_value_type": rsu_grant.grant_value_type,
-                    "grant_value": rsu_grant.grant_value,
-                    "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
-                    "shares_granted": rsu_grant.shares_granted,
-                    "vesting_tranches": [RSUVestingTrancheRead.model_validate(t) for t in tranches]
-                }
-                asset_dict["rsu_grant_details"] = RSUGrantDetailsRead(**grant_dict)
+        # Add datetime fields if they exist (optional fields)
+        if hasattr(asset, 'created_at'):
+            asset_dict["created_at"] = asset.created_at
+        if hasattr(asset, 'updated_at'):
+            asset_dict["updated_at"] = asset.updated_at
         
-        result.append(AssetRead(**asset_dict))
+        try:
+            if asset.type == "real_estate":
+                print(f"[DEBUG] read_assets: Loading RealEstateDetails for asset {asset.id}")
+                re_detail = session.exec(select(RealEstateDetails).where(RealEstateDetails.asset_id == asset.id)).first()
+                if re_detail:
+                    asset_dict["real_estate_details"] = RealEstateDetailsRead.model_validate(re_detail)
+                    print(f"[DEBUG] read_assets: Loaded RealEstateDetails for asset {asset.id}")
+            elif asset.type == "general_equity":
+                print(f"[DEBUG] read_assets: Loading GeneralEquityDetails for asset {asset.id}")
+                ge_detail = session.exec(select(GeneralEquityDetails).where(GeneralEquityDetails.asset_id == asset.id)).first()
+                if ge_detail:
+                    asset_dict["general_equity_details"] = GeneralEquityDetailsRead.model_validate(ge_detail)
+                    print(f"[DEBUG] read_assets: Loaded GeneralEquityDetails for asset {asset.id}")
+            elif asset.type == "specific_stock":
+                print(f"[DEBUG] read_assets: Loading SpecificStockDetails for asset {asset.id}")
+                stock_detail = session.exec(select(SpecificStockDetails).where(SpecificStockDetails.asset_id == asset.id)).first()
+                if stock_detail:
+                    asset_dict["specific_stock_details"] = SpecificStockDetailsRead.model_validate(stock_detail)
+                    print(f"[DEBUG] read_assets: Loaded SpecificStockDetails for asset {asset.id}")
+            elif asset.type == "rsu_grant":
+                print(f"[DEBUG] read_assets: Loading RSUGrantDetails for asset {asset.id}")
+                rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == asset.id)).first()
+                if rsu_grant:
+                    print(f"[DEBUG] read_assets: Found RSUGrantDetails id={rsu_grant.id}, loading tranches...")
+                    # Load vesting tranches
+                    tranches = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id)).all()
+                    print(f"[DEBUG] read_assets: Found {len(tranches)} vesting tranches")
+                    # Create RSUGrantDetailsRead with tranches
+                    grant_dict = {
+                        "id": rsu_grant.id,
+                        "asset_id": rsu_grant.asset_id,
+                        "employer": rsu_grant.employer,
+                        "security_id": rsu_grant.security_id,
+                        "grant_date": rsu_grant.grant_date,
+                        "grant_value_type": rsu_grant.grant_value_type,
+                        "grant_value": rsu_grant.grant_value,
+                        "grant_fmv_at_grant": rsu_grant.grant_fmv_at_grant,
+                        "shares_granted": rsu_grant.shares_granted,
+                        "vesting_tranches": [RSUVestingTrancheRead.model_validate(t) for t in tranches]
+                    }
+                    asset_dict["rsu_grant_details"] = RSUGrantDetailsRead(**grant_dict)
+                    print(f"[DEBUG] read_assets: Created RSUGrantDetailsRead for asset {asset.id}")
+            elif asset.type == "cash":
+                print(f"[DEBUG] read_assets: Loading CashDetails for asset {asset.id}")
+                cash_detail = session.exec(select(CashDetails).where(CashDetails.asset_id == asset.id)).first()
+                if cash_detail:
+                    asset_dict["cash_details"] = CashDetailsRead.model_validate(cash_detail)
+                    print(f"[DEBUG] read_assets: Loaded CashDetails for asset {asset.id}")
+        except Exception as e:
+            print(f"[ERROR] read_assets: Error loading details for asset {asset.id} (type: {asset.type}): {e}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Error loading details for asset {asset.id}: {str(e)}")
+        
+        try:
+            print(f"[DEBUG] read_assets: Creating AssetRead for asset {asset.id}...")
+            print(f"[DEBUG] read_assets: asset_dict keys: {list(asset_dict.keys())}")
+            asset_read = AssetRead(**asset_dict)
+            result.append(asset_read)
+            print(f"[DEBUG] read_assets: Successfully created AssetRead for asset {asset.id}")
+        except Exception as e:
+            error_msg = f"[ERROR] read_assets: Error creating AssetRead for asset {asset.id} (type: {asset.type}): {e}"
+            print(error_msg)
+            print(f"[ERROR] read_assets: Asset dict keys: {list(asset_dict.keys())}")
+            print(f"[ERROR] read_assets: Asset dict: {asset_dict}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Error serializing asset {asset.id}: {str(e)}")
     
+    print(f"[DEBUG] read_assets: Successfully processed {len(result)} assets, returning result")
     return result
 
 @app.post("/api/scenarios/{scenario_id}/assets", response_model=AssetRead)
@@ -313,7 +597,7 @@ def create_asset(scenario_id: int, asset: AssetCreate, session: Session = Depend
             rsu_grant = session.exec(select(RSUGrantDetails).where(RSUGrantDetails.asset_id == created_asset.id)).first()
             if rsu_grant:
                 # Load vesting tranches
-                tranches = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)).all()
+                tranches = session.exec(select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id)).all()
                 grant_dict = {
                     "id": rsu_grant.id,
                     "asset_id": rsu_grant.asset_id,
@@ -504,7 +788,7 @@ def get_rsu_grant_details(asset_id: int, session: Session = Depends(get_session)
     
     # Get vesting tranches
     tranches = session.exec(
-        select(RSUVestingTranche).where(RSUVestingTranche.grant_id == rsu_grant.id)
+        select(RSUVestingTranche).where(RSUVestingTranche.rsu_grant_id == rsu_grant.id)
         .order_by(RSUVestingTranche.vesting_date)
     ).all()
     

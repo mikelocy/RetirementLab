@@ -2,7 +2,7 @@ import axios from 'axios';
 import { 
   Scenario, ScenarioCreate, Asset, AssetCreate, SimpleBondSimulationResult, IncomeSource, IncomeSourceCreate,
   Security, SecurityCreate, RSUGrantForecastCreate, RSUGrantForecastRead, RSUGrantDetailsResponse,
-  TaxFundingSettings, TaxFundingSettingsCreate
+  TaxFundingSettings, TaxFundingSettingsCreate, TaxTable, TaxTableCreate
 } from '../types';
 
 const api = axios.create({
@@ -131,5 +131,15 @@ export const getTaxFundingSettings = async (scenarioId: number): Promise<TaxFund
 
 export const updateTaxFundingSettings = async (scenarioId: number, payload: TaxFundingSettingsCreate): Promise<TaxFundingSettings> => {
   const response = await api.put<TaxFundingSettings>(`/scenarios/${scenarioId}/settings`, payload);
+  return response.data;
+};
+
+export const getTaxTables = async (scenarioId: number): Promise<TaxTable[]> => {
+  const response = await api.get<TaxTable[]>(`/scenarios/${scenarioId}/tax-tables`);
+  return response.data;
+};
+
+export const upsertTaxTable = async (scenarioId: number, jurisdiction: "FED" | "CA", payload: TaxTableCreate): Promise<TaxTable> => {
+  const response = await api.put<TaxTable>(`/scenarios/${scenarioId}/tax-tables/${jurisdiction}`, payload);
   return response.data;
 };
