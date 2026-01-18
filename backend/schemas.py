@@ -104,9 +104,17 @@ class SpecificStockDetailsBase(SQLModel):
 class SpecificStockDetailsCreate(SpecificStockDetailsBase):
     pass
 
-class SpecificStockDetailsRead(SpecificStockDetailsBase):
+class SpecificStockDetailsRead(SQLModel):
     id: int
     asset_id: int
+    ticker: Optional[str] = None
+    current_price: Optional[float] = None
+    shares_owned: float
+    average_cost_basis: float
+    appreciation_rate: Optional[float] = None
+    tax_wrapper: TaxWrapper
+    source_type: Optional[str] = None
+    source_rsu_grant_id: Optional[int] = None
 
 class AssetBase(BaseModel):
     name: str
@@ -137,7 +145,7 @@ class RSUVestingTrancheCreate(RSUVestingTrancheBase):
 
 class RSUVestingTrancheRead(RSUVestingTrancheBase):
     id: int
-    grant_id: int
+    rsu_grant_id: int
 
 class RSUGrantDetailsBase(SQLModel):
     employer: Optional[str] = None

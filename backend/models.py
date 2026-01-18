@@ -97,6 +97,8 @@ class SpecificStockDetails(SQLModel, table=True):
     average_cost_basis: float
     appreciation_rate: Optional[float] = None  # Override security's assumed_appreciation_rate if set
     tax_wrapper: TaxWrapper = Field(default=TaxWrapper.TAXABLE)
+    source_type: Optional[str] = Field(default="user_entered") # "user_entered" or "rsu_vesting"
+    source_rsu_grant_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
