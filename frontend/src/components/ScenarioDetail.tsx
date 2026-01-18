@@ -10,6 +10,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { NumericFormat } from 'react-number-format';
+import CalculatorInput from './CalculatorInput';
 import { getScenario, getAssets, createAsset, runSimpleBondSimulation, updateScenario, updateAsset, deleteAsset, getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource, getSecurities, createOrGetSecurity, getRSUGrantDetails } from '../api/client';
 import { Scenario, ScenarioCreate, Asset, AssetCreate, AssetType, SimpleBondSimulationResult, IncomeSource, FilingStatus, IncomeType, Security, RSUVestingTrancheCreate, RSUGrantDetailsResponse } from '../types';
 import SimulationChart from './SimulationChart';
@@ -35,7 +36,7 @@ const CurrencyInput: React.FC<{
 }> = ({ label, value, onChange, required }) => {
   return (
     <NumericFormat
-      customInput={TextField}
+      customInput={CalculatorInput}
       fullWidth
       size="small"
       label={label}
@@ -193,13 +194,13 @@ const AssetForm: React.FC<AssetFormProps> = ({
             <CurrencyInput label="Mortgage Balance" value={reMortgageBalance} onChange={setReMortgageBalance} />
           </Grid>
           <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Interest Rate (0.04)" value={reInterestRate} onChange={(e) => setReInterestRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+            <CalculatorInput fullWidth size="small" type="number" label="Interest Rate (0.04)" value={reInterestRate} onChange={(e) => setReInterestRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
           </Grid>
           <Grid item xs={6}>
             <CurrencyInput label="Annual Rent" value={reAnnualRent} onChange={setReAnnualRent} />
           </Grid>
           <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Appreciation Rate" value={reAppreciationRate} onChange={(e) => {
+            <CalculatorInput fullWidth size="small" type="number" label="Appreciation Rate" value={reAppreciationRate} onChange={(e) => {
               const val = e.target.value;
               if (val === "") {
                 setReAppreciationRate("");
@@ -212,7 +213,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
           
           {/* Mortgage Details */}
           <Grid item xs={4}>
-            <TextField 
+            <CalculatorInput 
               fullWidth 
               size="small" 
               type="number" 
@@ -222,7 +223,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             />
           </Grid>
           <Grid item xs={4}>
-            <TextField 
+            <CalculatorInput 
               fullWidth 
               size="small" 
               type="number" 
@@ -332,7 +333,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
                 <Divider sx={{ my: 1 }}>Primary Residence (for Capital Gains Exclusion)</Divider>
               </Grid>
               <Grid item xs={6}>
-                <TextField 
+                <CalculatorInput 
                   fullWidth 
                   size="small" 
                   type="number" 
@@ -343,7 +344,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
                 />
               </Grid>
               <Grid item xs={6}>
-                <TextField 
+                <CalculatorInput 
                   fullWidth 
                   size="small" 
                   type="number" 
@@ -382,10 +383,10 @@ const AssetForm: React.FC<AssetFormProps> = ({
             <CurrencyInput label="Balance *" value={geAccountBalance} onChange={setGeAccountBalance} required />
           </Grid>
           <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Expected Return (0.07)" value={geExpectedReturnRate} onChange={(e) => setGeExpectedReturnRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+            <CalculatorInput fullWidth size="small" type="number" label="Expected Return (0.07)" value={geExpectedReturnRate} onChange={(e) => setGeExpectedReturnRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
           </Grid>
           <Grid item xs={6}>
-            <TextField fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
+            <CalculatorInput fullWidth size="small" type="number" label="Fee Rate (0.001)" value={geFeeRate} onChange={(e) => setGeFeeRate(e.target.value === "" ? "" : parseFloat(e.target.value))} />
           </Grid>
           {(geAccountType === "taxable" || geAccountType === "") && (
             <Grid item xs={6}>
@@ -429,7 +430,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             />
           </Grid>
           <Grid item xs={6}>
-            <TextField 
+            <CalculatorInput 
               fullWidth 
               size="small" 
               type="number" 
@@ -448,7 +449,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             />
           </Grid>
           <Grid item xs={6}>
-            <TextField 
+            <CalculatorInput 
               fullWidth 
               size="small" 
               type="number" 
@@ -519,7 +520,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
             />
           </Grid>
           <Grid item xs={4}>
-            <TextField
+            <CalculatorInput
               fullWidth
               size="small"
               type="number"
@@ -622,7 +623,7 @@ const AssetForm: React.FC<AssetFormProps> = ({
                     />
                   </Grid>
                   <Grid item xs={4}>
-                    <TextField
+                    <CalculatorInput
                       fullWidth
                       size="small"
                       type="number"
@@ -1631,26 +1632,26 @@ const ScenarioDetail: React.FC = () => {
               <TextField fullWidth label="Description" name="description" multiline rows={2} value={editScenario.description || ''} onChange={handleEditChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Current Age" name="current_age" value={editScenario.current_age} onChange={handleEditChange} />
+              <CalculatorInput fullWidth type="number" label="Current Age" name="current_age" value={editScenario.current_age} onChange={handleEditChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Base Year" name="base_year" value={editScenario.base_year || new Date().getFullYear()} onChange={handleEditChange} helperText="Calendar year corresponding to current age" />
+              <CalculatorInput fullWidth type="number" label="Base Year" name="base_year" value={editScenario.base_year || new Date().getFullYear()} onChange={handleEditChange} helperText="Calendar year corresponding to current age" />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Retirement Age" name="retirement_age" value={editScenario.retirement_age} onChange={handleEditChange} />
+              <CalculatorInput fullWidth type="number" label="Retirement Age" name="retirement_age" value={editScenario.retirement_age} onChange={handleEditChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="End Age" name="end_age" value={editScenario.end_age} onChange={handleEditChange} />
+              <CalculatorInput fullWidth type="number" label="End Age" name="end_age" value={editScenario.end_age} onChange={handleEditChange} />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Inflation Rate (0.03 = 3%)" name="inflation_rate" value={editScenario.inflation_rate} onChange={handleEditChange} inputProps={{ step: 0.001 }} />
+              <CalculatorInput fullWidth type="number" label="Inflation Rate (0.03 = 3%)" name="inflation_rate" value={editScenario.inflation_rate} onChange={handleEditChange} inputProps={{ step: 0.001 }} />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Bond Return Rate (0.04 = 4%)" name="bond_return_rate" value={editScenario.bond_return_rate} onChange={handleEditChange} inputProps={{ step: 0.001 }} />
+              <CalculatorInput fullWidth type="number" label="Bond Return Rate (0.04 = 4%)" name="bond_return_rate" value={editScenario.bond_return_rate} onChange={handleEditChange} inputProps={{ step: 0.001 }} />
             </Grid>
             <Grid item xs={6}>
               <NumericFormat
-                customInput={TextField}
+                customInput={CalculatorInput}
                 fullWidth
                 label="Annual Contribution (Pre)"
                 value={editScenario.annual_contribution_pre_retirement}
@@ -1669,7 +1670,7 @@ const ScenarioDetail: React.FC = () => {
             </Grid>
             <Grid item xs={6}>
               <NumericFormat
-                customInput={TextField}
+                customInput={CalculatorInput}
                 fullWidth
                 label="Annual Spending (Post)"
                 value={editScenario.annual_spending_in_retirement}
@@ -1825,20 +1826,20 @@ const ScenarioDetail: React.FC = () => {
             )}
             {newIncomeType !== "house_sale" && (
               <Grid item xs={6}>
-                <TextField fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />
+                <CalculatorInput fullWidth type="number" label="Appreciation (0.00)" value={newIncomeAppreciation} onChange={(e) => setNewIncomeAppreciation(e.target.value)} />
               </Grid>
             )}
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label={newIncomeType === "house_sale" ? "Sale Age" : "Start Age"} value={newIncomeStartAge} onChange={(e) => setNewIncomeStartAge(e.target.value)} required />
+              <CalculatorInput fullWidth type="number" label={newIncomeType === "house_sale" ? "Sale Age" : "Start Age"} value={newIncomeStartAge} onChange={(e) => setNewIncomeStartAge(e.target.value)} required />
             </Grid>
             {newIncomeType !== "house_sale" && (
               <Grid item xs={6}>
-                <TextField fullWidth type="number" label="End Age" value={newIncomeEndAge} onChange={(e) => setNewIncomeEndAge(e.target.value)} required />
+                <CalculatorInput fullWidth type="number" label="End Age" value={newIncomeEndAge} onChange={(e) => setNewIncomeEndAge(e.target.value)} required />
               </Grid>
             )}
             {newIncomeType === "house_sale" && (
               <Grid item xs={6}>
-                <TextField fullWidth type="number" label="End Age (same as Sale Age)" value={newIncomeStartAge} disabled />
+                <CalculatorInput fullWidth type="number" label="End Age (same as Sale Age)" value={newIncomeStartAge} disabled />
               </Grid>
             )}
           </Grid>

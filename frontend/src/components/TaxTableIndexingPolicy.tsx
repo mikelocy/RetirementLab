@@ -16,6 +16,7 @@ import {
 import { getTaxFundingSettings, updateTaxFundingSettings } from '../api/client';
 import { TaxFundingSettingsCreate, TaxTableIndexingPolicy as TaxTableIndexingPolicyType } from '../types';
 import { NumericFormat } from 'react-number-format';
+import CalculatorInput from './CalculatorInput';
 
 interface TaxTableIndexingPolicyProps {
   scenarioId: number;
@@ -123,7 +124,7 @@ const TaxTableIndexingPolicy: React.FC<TaxTableIndexingPolicyProps> = ({ scenari
       {policy === "CUSTOM_RATE" && (
         <Box sx={{ mt: 3 }}>
           <NumericFormat
-            customInput={TextField}
+            customInput={CalculatorInput}
             fullWidth
             label="Custom Index Rate (%)"
             value={customRate === "" ? "" : customRate}

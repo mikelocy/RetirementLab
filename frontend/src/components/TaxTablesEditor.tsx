@@ -25,6 +25,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { getTaxTables, upsertTaxTable } from '../api/client';
 import { TaxTable, TaxTableCreate, TaxBracket, FilingStatus } from '../types';
 import { NumericFormat } from 'react-number-format';
+import CalculatorInput from './CalculatorInput';
 import { getScenario } from '../api/client';
 
 interface TaxTablesEditorProps {
@@ -230,7 +231,7 @@ const TaxTablesEditor: React.FC<TaxTablesEditorProps> = ({ scenarioId, onBack, o
       <Box>
         <Box sx={{ mb: 3 }}>
           <NumericFormat
-            customInput={TextField}
+            customInput={CalculatorInput}
             fullWidth
             label="Standard Deduction"
             value={standardDeduction === "" ? "" : standardDeduction}
@@ -268,7 +269,7 @@ const TaxTablesEditor: React.FC<TaxTablesEditorProps> = ({ scenarioId, onBack, o
                       <Typography variant="body2" color="text.secondary">∞ (No limit)</Typography>
                     ) : (
                       <NumericFormat
-                        customInput={TextField}
+                        customInput={CalculatorInput}
                         size="small"
                         fullWidth
                         value={bracket.up_to}
@@ -287,7 +288,7 @@ const TaxTablesEditor: React.FC<TaxTablesEditorProps> = ({ scenarioId, onBack, o
                   </TableCell>
                   <TableCell>
                     <NumericFormat
-                      customInput={TextField}
+                      customInput={CalculatorInput}
                       size="small"
                       fullWidth
                       value={bracket.rate * 100}

@@ -6,6 +6,7 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { NumericFormat } from 'react-number-format';
+import CalculatorInput from './CalculatorInput';
 import { useNavigate } from 'react-router-dom';
 import { getScenarios, createScenario, deleteScenario } from '../api/client';
 import { Scenario, ScenarioCreate, FilingStatus } from '../types';
@@ -128,26 +129,26 @@ const ScenarioList: React.FC = () => {
               <TextField fullWidth label="Description" name="description" multiline rows={2} value={newScenario.description || ''} onChange={handleChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Current Age" name="current_age" value={newScenario.current_age} onChange={handleChange} />
+              <CalculatorInput fullWidth type="number" label="Current Age" name="current_age" value={newScenario.current_age} onChange={handleChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Base Year" name="base_year" value={newScenario.base_year || new Date().getFullYear()} onChange={handleChange} helperText="Calendar year for current age" />
+              <CalculatorInput fullWidth type="number" label="Base Year" name="base_year" value={newScenario.base_year || new Date().getFullYear()} onChange={handleChange} helperText="Calendar year for current age" />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="Retirement Age" name="retirement_age" value={newScenario.retirement_age} onChange={handleChange} />
+              <CalculatorInput fullWidth type="number" label="Retirement Age" name="retirement_age" value={newScenario.retirement_age} onChange={handleChange} />
             </Grid>
             <Grid item xs={4}>
-              <TextField fullWidth type="number" label="End Age" name="end_age" value={newScenario.end_age} onChange={handleChange} />
+              <CalculatorInput fullWidth type="number" label="End Age" name="end_age" value={newScenario.end_age} onChange={handleChange} />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Inflation Rate (0.03 = 3%)" name="inflation_rate" value={newScenario.inflation_rate} onChange={handleChange} inputProps={{ step: 0.001 }} />
+              <CalculatorInput fullWidth type="number" label="Inflation Rate (0.03 = 3%)" name="inflation_rate" value={newScenario.inflation_rate} onChange={handleChange} inputProps={{ step: 0.001 }} />
             </Grid>
             <Grid item xs={6}>
-              <TextField fullWidth type="number" label="Bond Return Rate (0.04 = 4%)" name="bond_return_rate" value={newScenario.bond_return_rate} onChange={handleChange} inputProps={{ step: 0.001 }} />
+              <CalculatorInput fullWidth type="number" label="Bond Return Rate (0.04 = 4%)" name="bond_return_rate" value={newScenario.bond_return_rate} onChange={handleChange} inputProps={{ step: 0.001 }} />
             </Grid>
             <Grid item xs={6}>
               <NumericFormat
-                customInput={TextField}
+                customInput={CalculatorInput}
                 fullWidth
                 label="Annual Contribution (Pre)"
                 value={newScenario.annual_contribution_pre_retirement}
@@ -166,7 +167,7 @@ const ScenarioList: React.FC = () => {
             </Grid>
             <Grid item xs={6}>
               <NumericFormat
-                customInput={TextField}
+                customInput={CalculatorInput}
                 fullWidth
                 label="Annual Spending (Post)"
                 value={newScenario.annual_spending_in_retirement}
